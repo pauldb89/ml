@@ -2,7 +2,6 @@ import math
 import random
 import unittest
 
-
 import numpy as np
 from sklearn.metrics import roc_auc_score
 
@@ -48,6 +47,8 @@ def auc(labels, predictions):
     return area
 
 
+# TODO(pauldb): Move tests into their own directory.
+# TODO(pauldb): Create an abstract base test case class.
 class AucTestCase(unittest.TestCase):
     def test_mismatched_lengths(self):
         with self.assertRaises(AssertionError):
