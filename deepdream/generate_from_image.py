@@ -43,7 +43,7 @@ def main():
     parser.add_argument("--lr", type=float, default=0.01, help="Learning rate")
     parser.add_argument("--module_names", type=str, default=DEFAULT_MODULES, help="List of modules to excite")
     parser.add_argument("--class_id", type=int, default=-1, help="Class outputs to excite")
-    parser.add_argument("--num_steps", type=int, default=1000, help="Number of steps")
+    parser.add_argument("--num_steps", type=int, default=400, help="Number of steps")
     parser.add_argument("--display_every_n_steps", type=int, default=200, help="Show updated image every N steps")
     parser.add_argument("--resolution_scale", type=float, default=1.3, help="Resolution (aka octave) scale")
     parser.add_argument("--min_resolution", type=int, default=0, help="Min resolution exponent")
