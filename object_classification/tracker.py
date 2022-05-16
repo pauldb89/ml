@@ -6,8 +6,8 @@ import torchvision
 from torch.nn.parallel import DistributedDataParallel
 
 from object_classification.data import get_eval_data_loader
-from object_classification.distributed_utils import print_once
-from object_classification.distributed_utils import world_size
+from common.distributed import print_once
+from common.distributed import world_size
 from object_classification.evaluate import evaluate
 from object_classification.models.model_wrapper import PretrainedWrapper
 

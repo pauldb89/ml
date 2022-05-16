@@ -17,9 +17,9 @@ from torchvision.transforms import transforms
 
 from consts import IMAGENET_MEAN
 from consts import IMAGENET_STD
-from object_classification.distributed_utils import get_rank
-from object_classification.distributed_utils import print_once
-from object_classification.distributed_utils import world_size
+from common.distributed import get_rank
+from common.distributed import print_once
+from common.distributed import world_size
 
 
 @dataclass

@@ -8,7 +8,6 @@ from torch import nn
 import torch.nn.functional as F
 
 from object_classification.data import Batch
-from object_classification.distributed_utils import print_once
 
 
 @dataclass

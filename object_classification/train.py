@@ -9,15 +9,13 @@ from typing import Union
 import torch
 import torch.optim
 from torch import distributed
-from torch.optim.lr_scheduler import LambdaLR
-from torch.optim.lr_scheduler import StepLR
 from torch.optim.lr_scheduler import _LRScheduler
 
 from object_classification.data import DATASETS
 from object_classification.data import get_eval_data_loader
 from object_classification.data import get_train_data_loader
-from object_classification.distributed_utils import print_once
-from object_classification.distributed_utils import world_size
+from common.distributed import print_once
+from common.distributed import world_size
 from object_classification.evaluate import evaluate
 from object_classification.models.inception import InceptionV3
 from object_classification.models.model_config import MODEL_CONFIGS

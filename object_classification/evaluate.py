@@ -6,7 +6,7 @@ from torch.nn.parallel import DistributedDataParallel
 from torch.utils.data import DataLoader
 from torch.nn import functional as F
 
-from object_classification.distributed_utils import print_once
+from common.distributed import print_once
 
 
 def evaluate(
