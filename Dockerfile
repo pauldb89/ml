@@ -9,12 +9,15 @@ RUN apt-key adv --fetch-keys https://developer.download.nvidia.com/compute/machi
 
 RUN apt-get update && \
     apt-get install -y curl \
+        ffmpeg \
         git \
         libbz2-dev \
         libffi-dev \
         liblzma-dev \
+        libsm6 \
         libsqlite3-dev \
         libssl-dev \
+        libxext6 \
         python-dev \
         python3-setuptools \
         vim \
