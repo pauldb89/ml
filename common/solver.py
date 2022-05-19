@@ -91,8 +91,9 @@ class Solver:
         optimizer: torch.optim.Optimizer,
         lr_scheduler: _LRScheduler,
         train_data_loader: DataLoader,
-        max_steps: int,
         eval_fn: EvalFunction,
+        max_steps: Optional[int] = None,
+        epochs: int = 1,
         evaluate_every_n_steps: Optional[int] = None,
         evaluate_at_start: bool = False,
         evaluate_at_end: bool = True,
@@ -102,8 +103,9 @@ class Solver:
         self.optimizer = optimizer
         self.lr_scheduler = lr_scheduler
         self.train_data_loader = train_data_loader
-        self.max_steps = max_steps
         self.eval_fn = eval_fn
+        self.max_steps = max_steps
+        self.epochs = epochs
         self.evaluate_every_n_steps = evaluate_every_n_steps
         self.evaluate_at_start = evaluate_at_start
         self.evaluate_at_end = evaluate_at_end
@@ -122,45 +124,52 @@ class Solver:
         throughput = Throughput()
         throughput.start(0)
 
-        for step, batch in enumerate(self.train_data_loader):
-            timer.end(TimeKey.DATA_LOAD)
+        step = 0
+        for epoch in range(self.epochs):
+            for batch in self.train_data_loader:
+                timer.end(TimeKey.DATA_LOAD)
 
-            if step > self.max_steps:
-                break
+                if self.max_steps is not None and step >= self.max_steps:
+                    break
 
-            timer.start(TimeKey.FORWARD)
-            with autocast():
-                loss = self.model(batch)
-                loss_history.append(loss.item())
+                timer.start(TimeKey.FORWARD)
+                with autocast():
+                    output = self.model(batch)
+                    loss = output["loss"]
+                    loss_history.append(loss.item())
 
-            timer.end(TimeKey.FORWARD)
+                timer.end(TimeKey.FORWARD)
 
-            timer.start(TimeKey.BACKWARD)
-            scaler.scale(loss).backward()
-            scaler.step(self.optimizer)
-            scaler.update()
+                timer.start(TimeKey.BACKWARD)
+                scaler.scale(loss).backward()
+                scaler.step(self.optimizer)
+                scaler.update()
 
-            self.lr_scheduler.step()
-            self.optimizer.zero_grad()
-            timer.end(TimeKey.BACKWARD)
+                self.lr_scheduler.step()
+                self.optimizer.zero_grad()
+                timer.end(TimeKey.BACKWARD)
 
-            if is_root_process() and self.log_every_n_steps is not None and step % self.log_every_n_steps == 0:
-                throughput.end((step+1) * batch.size() * world_size())
+                if is_root_process() and self.log_every_n_steps is not None and step % self.log_every_n_steps == 0:
+                    throughput.end((step+1) * batch.size() * world_size())
 
-                print(
-                    f"Step {step}: LR {self.lr_scheduler.get_last_lr()[0]:.8f}\t Loss {np.mean(loss_history):.5f}\t"
-                    f"Data load time {timer.get(TimeKey.DATA_LOAD):.5f} seconds\t"
-                    f"Forward time {timer.get(TimeKey.FORWARD):.5f} seconds\t"
-                    f"Backward time {timer.get(TimeKey.BACKWARD):.5f} seconds\t"
-                    f"Throughput {throughput.get():5f} examples/second"
-                )
+                    print(
+                        f"Step {step}: Epoch {epoch}\t"
+                        f"LR {self.lr_scheduler.get_last_lr()[0]:.8f}\t"
+                        f"Loss {np.mean(loss_history):.5f}\t"
+                        f"Data load time {timer.get(TimeKey.DATA_LOAD):.5f} seconds\t"
+                        f"Forward time {timer.get(TimeKey.FORWARD):.5f} seconds\t"
+                        f"Backward time {timer.get(TimeKey.BACKWARD):.5f} seconds\t"
+                        f"Throughput {throughput.get():5f} examples/second"
+                    )
 
-                throughput.start((step+1) * batch.size() * world_size())
+                    throughput.start((step+1) * batch.size() * world_size())
 
-            if self.evaluate_every_n_steps is not None and step > 0 and step % self.evaluate_every_n_steps == 0:
-                self.eval_fn(model=self.model, step=step)
+                if self.evaluate_every_n_steps is not None and step > 0 and step % self.evaluate_every_n_steps == 0:
+                    self.eval_fn(model=self.model, step=step)
 
-            timer.start(TimeKey.DATA_LOAD)
+                timer.start(TimeKey.DATA_LOAD)
+
+                step += 1
 
         if self.evaluate_at_end:
             self.eval_fn(model=self.model, step=self.max_steps)

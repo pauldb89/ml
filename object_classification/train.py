@@ -20,7 +20,7 @@ from object_classification.evaluate import evaluate
 from object_classification.models.inception import InceptionV3
 from object_classification.models.model_config import MODEL_CONFIGS
 from object_classification.models.resnet import ResNet
-from object_classification.solver import Solver
+from common.solver import Solver
 from object_classification.models.vgg import VGG
 from object_classification.models.vgg import VGG_16_CONFIG
 
@@ -115,7 +115,6 @@ def main():
         dataset_name=dataset_config.name,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
-        max_steps=args.max_steps,
         resize_dim=model_config.train_resize_dim
     )
     print_once(f"Training dataset has {len(train_data_loader.dataset)} examples")

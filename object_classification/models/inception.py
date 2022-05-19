@@ -6,6 +6,7 @@ from torch import nn
 import torch.nn.functional as F
 
 from object_classification.data import Batch
+from object_classification.models.vision_model import VisionModel
 
 
 class ConvBlock(nn.Module):
@@ -215,11 +216,12 @@ class InceptionLayerE(InceptionLayerBase):
         ])
 
 
-class InceptionV3(nn.Module):
+class InceptionV3(VisionModel):
     def __init__(self, dropout: float = 0.5, num_classes: int = 1000):
-        super().__init__()
+        super().__init__(dropout, num_classes)
 
-        self.layers = nn.Sequential(
+    def make_layers(self, dropout: float, num_classes: int) -> nn.Module:
+        return nn.Sequential(
             ConvBlock(in_channels=3, out_channels=32, kernel_size=3, stride=2),
             ConvBlock(in_channels=32, out_channels=32, kernel_size=3),
             ConvBlock(in_channels=32, out_channels=64, kernel_size=3, padding=1),
@@ -249,11 +251,3 @@ class InceptionV3(nn.Module):
             nn.Flatten(),
             nn.Linear(2048, num_classes),
         )
-
-    def forward(self, batch: Batch) -> torch.Tensor:
-        batch = batch.to(torch.device("cuda"))
-        logits = self.layers(batch.images)
-        return F.cross_entropy(logits, batch.classes)
-
-    def eval_forward(self, images: torch.Tensor) -> torch.Tensor:
-        return F.softmax(self.layers(images), dim=1)

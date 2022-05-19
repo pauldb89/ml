@@ -71,7 +71,6 @@ def get_train_data_loader(
     dataset_name: str,
     batch_size: int,
     num_workers: int,
-    max_steps: int,
     resize_dim: int
 ) -> DataLoader:
     with DatasetTimer():
@@ -88,7 +87,7 @@ def get_train_data_loader(
         return DataLoader(
             dataset=dataset,
             batch_size=batch_size,
-            sampler=RandomSampler(data_source=dataset, num_samples=batch_size * max_steps),
+            sampler=RandomSampler(data_source=dataset),
             num_workers=num_workers,
             collate_fn=collate_fn,
             drop_last=True,

@@ -8,6 +8,7 @@ from torch import nn
 import torch.nn.functional as F
 
 from object_classification.data import Batch
+from object_classification.models.vision_model import VisionModel
 
 
 @dataclass
@@ -151,17 +152,18 @@ class ConvLayer(nn.Module):
         return self.layers(x)
 
 
-class ResNet(nn.Module):
+class ResNet(VisionModel):
     def __init__(self, config: Sequence[ConvLayerConfig] = RESNET_50_CONFIG, num_classes: int = 1000):
-        super().__init__()
+        super().__init__(config, num_classes)
 
+    def make_layers(self, config: Sequence[ConvLayerConfig], num_classes):
         in_channels = 64
         conv_blocks = []
         for i, conv_layer_config in enumerate(config):
             conv_blocks.append(ConvLayer(conv_layer_config, in_channels=in_channels, downsample=i > 0))
             in_channels = conv_layer_config.block_config[-1].channels
 
-        self.layers = nn.Sequential(
+        return nn.Sequential(
             Conv2D(kernel_size=7, in_channels=3, out_channels=64, stride=2, padding=3),
             nn.ReLU(),
             nn.MaxPool2d(kernel_size=3, stride=2),
@@ -170,11 +172,3 @@ class ResNet(nn.Module):
             nn.Flatten(),
             nn.Linear(2048, num_classes),
         )
-
-    def forward(self, batch: Batch) -> torch.Tensor:
-        batch = batch.to(torch.device("cuda"))
-        logits = self.layers(batch.images)
-        return F.cross_entropy(logits, batch.classes)
-
-    def eval_forward(self, images: torch.Tensor) -> torch.Tensor:
-        return F.softmax(self.layers(images), dim=1)
