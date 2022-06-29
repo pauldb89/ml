@@ -2,6 +2,7 @@ import functools
 import itertools
 import math
 import time
+from collections import Counter
 from collections import defaultdict
 from collections import deque
 from typing import Any
@@ -20,11 +21,32 @@ import torchvision.ops as O
 from torch import nn
 from torch.nn import functional as F
 
+from object_detection.anchors import AnchorGenerator
+from object_detection.anchors import sample_anchors
 from object_detection.bounding_box import BBox
+from object_detection.data import Batch
+
+
+"""
+Notations:
+B - number of images per batch.
+L - Number of resolutions (number of levels in the feature pyramid).
+H - Height of all images in a batch.
+Hi - Height of the feature map at level i in the feature pyramid (0 -> P_2, 1 -> P_3, ...)
+W - Width of all images in a batch.
+Wi - Width of the feature map at level i in the feature pyramid (0 -> P_2, 1 -> P_3, ...)
+C - Number of channels for feature maps.
+A - Number of aspect ratios.
+K - Number of classes.
+R - Total number of anchors / region proposals for an image = A * sum_{i=1}^L H_i * W_i
+S - Number of region proposals sampled for computing the RPN loss.
+Pi - Number of ROIs after NMS for each image i in the batch.
+TODO(pauldb): Explain how the anchor ID mapping works.
+"""
 
 
 def timed(fn: Callable) -> Callable:
-    def wrapper(self: Detector, *args, **kwargs):
+    def wrapper(self, *args, **kwargs):
         start_time = time.time()
         ret = fn(self, *args, **kwargs)
         prefix = "train" if self.training else "eval"
@@ -36,6 +58,18 @@ def timed(fn: Callable) -> Callable:
 MAX_LEVEL = 5
 STRIDE_LEVEL_FACTOR = 4
 ANCHOR_SIZE_LEVEL_FACTOR = 32
+
+
+def compute_ious(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    ix1 = torch.maximum(a[:, 0].view(-1, 1), b[:, 0])
+    iy1 = torch.maximum(a[:, 1].view(-1, 1), b[:, 1])
+    ix2 = torch.minimum((a[:, 0] + a[:, 2]).view(-1, 1), b[:, 0] + b[:, 2])
+    iy2 = torch.minimum((a[:, 1] + a[:, 3]).view(-1, 1), b[:, 1] + b[:, 3])
+    i_area = torch.maximum(ix2 - ix1, torch.tensor(0.0)) * torch.maximum(iy2 - iy1, torch.tensor(0.0))
+    a_area = a[:, 2] * a[:, 3]
+    b_area = b[:, 2] * b[:, 3]
+    iou = i_area / (a_area.view(-1, 1) + b_area - i_area)
+    return iou
 
 
 class ConvBlock(nn.Module):
@@ -70,47 +104,58 @@ class ConvBlock(nn.Module):
         return self.layers(x)
 
 
-class AnchorIndex(NamedTuple):
-    """
-    Helper class to facilitate looking up anchors based on feature map locations.
-    """
-    # index of the image in the batch
-    image_index: int
-    # level in the feature map
-    level: int
-    # feature map index in the x-axis
-    x_index: int
-    # feature map index in the y-axis
-    y_index: int
-    # index of the aspect ratio
-    aspect_index: int
-
-    @property
-    def feature_map_index(self) -> Tuple[int, int, int, int]:
-        return self.image_index, self.x_index, self.y_index, self.aspect_index
-
-
 class RPNLabels(NamedTuple):
-    """
-    Class to store label information for region proposals.
-
-    Let R be the number of region proposals in a batch. Then:
-    - objectness_labels: R - Whether a sampled region proposal matches a ground truth box.
-    - anchor_bboxes: R x 4 - The bbox coordinates of the anchors for each sampled region proposal.
-    - ground_truth_bboxes: R x 4 - The bbox coordinates for the ground truth bboxes of each sampled region proposal.
-    - mask: R - Whether or not to include an image in the RPN loss calculation.
-    - anchor_indexes: A list of R elements corresponding to the feature map locations for the sampled regions (anchors).
-    """
+    # A tensor of shape B x S representing whether the sampled ROI corresponds to an object or not.
     objectness_labels: torch.Tensor
-    anchor_bboxes: torch.Tensor
-    gt_bboxes: torch.Tensor
-    mask: torch.Tensor
-    anchor_indexes: List[AnchorIndex]
+    # A tensor of shape B x S representing the anchor IDs matching the sampled ROIs.
+    anchor_ids: torch.Tensor
+    # A tensor of shape B x S x 4 representing non-centered target bboxes for the anchor IDs with objectness label of 1.
+    target_bboxes: torch.Tensor
+
+
+def center_bboxes(bboxes: torch.Tensor) -> torch.Tensor:
+    x = bboxes[..., 0] + bboxes[..., 2] / 2
+    y = bboxes[..., 1] + bboxes[..., 3] / 2
+    w = bboxes[..., 2]
+    h = bboxes[..., 3]
+    return torch.stack([x, y, w, h], dim=-1)
+
+
+def uncenter_bboxes(bboxes: torch.Tensor) -> torch.Tensor:
+    x = bboxes[..., 0] - bboxes[..., 2] / 2
+    y = bboxes[..., 1] - bboxes[..., 3] / 2
+    w = bboxes[..., 2]
+    h = bboxes[..., 3]
+    return torch.stack([x, y, w, h], dim=-1)
+
+
+def scale_bboxes(bboxes: torch.Tensor, centered_anchors: torch.Tensor) -> torch.Tensor:
+    assert bboxes.shape == centered_anchors.shape, (bboxes.shape, centered_anchors.shape)
+
+    x = bboxes[..., 0] * centered_anchors[..., 2] + centered_anchors[..., 0]
+    y = bboxes[..., 1] * centered_anchors[..., 3] + centered_anchors[..., 1]
+    w = centered_anchors[..., 2] * torch.exp(bboxes[..., 2])
+    h = centered_anchors[..., 3] * torch.exp(bboxes[..., 3])
+    return torch.stack([x, y, w, h], dim=-1)
+
+
+def parse_annotated_bboxes(annotations: List[Dict[str, Any]]) -> torch.Tensor:
+    bboxes = []
+    for annotation in annotations:
+        bbox = annotation["bbox"]
+        bboxes.append([bbox[0], bbox[1], bbox[2], bbox[3]])
+    return torch.tensor(bboxes)
+
+
+def parse_annotated_categories(annotations: List[Dict[str, Any]]) -> torch.Tensor:
+    return torch.tensor([annotation["category_id"] for annotation in annotations])
 
 
 class Detector(nn.Module):
     def __init__(
         self,
+        resolutions: Tuple[int, ...] = (32, 64, 128, 256, 512),
+        strides: Tuple[int, ...] = (4, 8, 16, 32, 64),
         aspect_ratios: Tuple[float, ...] = (0.5, 1.0, 2.0),
         rpn_positive_iou_threshold: float = 0.7,
         rpn_negative_iou_threshold: float = 0.3,
@@ -118,7 +163,9 @@ class Detector(nn.Module):
         rpn_regions_per_batch: int = 256,
         rpn_positive_regions_per_batch: int = 128,
         nms_iou_threshold: float = 0.7,
-        max_train_rois_per_image: int = 2000,
+        max_train_nms_candidates: int = 2000,
+        max_eval_nms_candidates: int = 1000,
+        max_train_rois_per_image: int = 1000,
         max_eval_rois_per_image: int = 1000,
         bbox_loss_weight: float = 10.0,
         detection_iou_threshold: float = 0.5,
@@ -126,7 +173,10 @@ class Detector(nn.Module):
     ):
         super().__init__()
 
+        self.resolutions = resolutions
         self.aspect_ratios = aspect_ratios
+        self.anchor_generator = AnchorGenerator(resolutions=resolutions, strides=strides, aspect_ratios=aspect_ratios)
+
         self.rpn_positive_iou_threshold = rpn_positive_iou_threshold
         self.rpn_negative_iou_threshold = rpn_negative_iou_threshold
         self.num_images_per_batch = num_images_per_batch
@@ -135,6 +185,8 @@ class Detector(nn.Module):
         self.nms_iou_threshold = nms_iou_threshold
         self.max_train_rois_per_image = max_train_rois_per_image
         self.max_eval_rois_per_image = max_eval_rois_per_image
+        self.max_train_nms_candidates = max_train_nms_candidates
+        self.max_eval_nms_candidates = max_eval_nms_candidates
         self.bbox_loss_weight = bbox_loss_weight
         self.detection_iou_threshold = detection_iou_threshold
         self.num_classes = num_classes
@@ -187,7 +239,7 @@ class Detector(nn.Module):
                 out_channels=5 * len(self.aspect_ratios),
                 kernel_size=1,
                 stride=1,
-                padding=1,
+                padding=0,
                 relu=False,
             ),
         )
@@ -202,267 +254,228 @@ class Detector(nn.Module):
         self.classification_head = nn.Linear(1024, num_classes + 1)
         self.regression_head = nn.Linear(1024, 4 * num_classes)
 
-    @timed
-    def compute_proposal_labels(
-        self,
-        images: torch.Tensor,
-        labels: List[List[Dict[str, Any]]],
-    ) -> RPNLabels:
-        """
-        :param images: A tensor of size B x 3 x H x W.
-        :param labels: A list of B ground truth labels representing classes and bounding boxes.
-        :return: A tuple: proposal_labels and proposal_masks.
-            - rpn_labels is a tensor of size B x L x H x W x A x (1 + 4)) representing the objectness score
-              and proposal box for each image x layer x height x width x aspect ratio.
-            - rpn_masks is a tensor of size B x L x H x W x A representing whether to use the proposal
-              for image x layer x (height x width x aspect ratio) in the proposal loss.
-        """
-        image_height, image_width = images[0].shape[-2], images[0].shape[-1]
-
-        anchors = []
-        for level in range(MAX_LEVEL):
-            stride = STRIDE_LEVEL_FACTOR * (1 << level)
-            target_size = ANCHOR_SIZE_LEVEL_FACTOR * (1 << level)
-            for b in range(len(labels)):
-                for xi, x in enumerate(range(0, image_height, stride)):
-                    for yi, y in enumerate(range(0, image_width, stride)):
-                        for ai, aspect_ratio in enumerate(self.aspect_ratios):
-                            anchor_index = AnchorIndex(
-                                image_index=b,
-                                level=level,
-                                x_index=xi,
-                                y_index=yi,
-                                aspect_index=ai,
-                            )
-                            anchor_width = target_size * math.sqrt(aspect_ratio)
-                            anchor_height = target_size / math.sqrt(aspect_ratio)
-                            anchor_bbox = BBox(
-                                x=max(0, x-anchor_width/2),
-                                y=max(0, y-anchor_height/2),
-                                w=min(image_width, anchor_width),
-                                h=max(image_height, anchor_height),
-                            )
-                            anchors.append((anchor_index, anchor_bbox))
-
-        anchor_max_iou = [0] * len(anchors)
-        anchor_argmax_iou = [0] * len(anchors)
-        gt_max_iou = [[0 for _ in label] for label in labels]
-        gt_argmax_iou = [[() for _ in label] for label in labels]
-        for i, (anchor_index, anchor_bbox) in enumerate(anchors):
-            b = anchor_index.image_index
-            for gti, annotation in enumerate(labels[b]):
-                gt_bbox = BBox.from_array(annotation["bbox"], centered=False)
-
-                iou = anchor_bbox.iou(gt_bbox)
-                if iou > anchor_max_iou[i]:
-                    anchor_max_iou[i], anchor_argmax_iou[i] = iou, gti
-
-                if iou > gt_max_iou[b][gti]:
-                    gt_max_iou[b][gti], gt_argmax_iou[b][gti] = iou, anchor_index
-
-        positive_anchor_ids, negative_anchor_ids = set(itertools.chain(*gt_argmax_iou)), set()
-        for anchor_id, max_iou in enumerate(anchor_max_iou):
-            if max_iou >= self.rpn_positive_iou_threshold:
-                positive_anchor_ids.add(anchor_id)
-            elif max_iou <= self.rpn_negative_iou_threshold and anchor_id not in positive_anchor_ids:
-                negative_anchor_ids.add(anchor_id)
-
-        sampled_positive_anchor_ids = np.random.choice(
-            list(positive_anchor_ids),
-            size=min(len(positive_anchor_ids), self.rpn_positive_regions_per_batch),
-            replace=False,
-        )
-        sampled_negative_anchor_ids = np.random.choice(
-            list(negative_anchor_ids),
-            size=min(len(negative_anchor_ids), self.rpn_regions_per_batch - len(positive_anchor_ids)),
-            replace=False,
-        )
-
-        objectness_labels = torch.zeros(self.rpn_regions_per_batch)
-        mask = torch.zeros(self.rpn_regions_per_batch)
-        anchor_bboxes = torch.ones(self.rpn_regions_per_batch, 4)
-        gt_bboxes = torch.ones(self.rpn_regions_per_batch, 4)
-        anchor_indexes = []
-        for i, anchor_id in enumerate(sampled_positive_anchor_ids.union(sampled_negative_anchor_ids)):
-            anchor_index, anchor_bbox = anchors[anchor_id]
-            anchor_indexes.append(anchor_index)
-            objectness_labels[i] = anchor_id in positive_anchor_ids
-            mask[i] = 1
-            anchor_bboxes[i] = torch.tensor(anchor_bbox.to_array(centered=True))
-            gt = labels[anchor_index.image_index][anchor_argmax_iou[anchor_id]]
-            gt_bboxes[i] = torch.tensor(BBox.from_array(gt["bbox"], centered=False).to_array(centered=True))
-
-        return RPNLabels(
-            objectness_labels=objectness_labels,
-            anchor_bboxes=anchor_bboxes,
-            gt_bboxes=gt_bboxes,
-            anchor_indexes=anchor_indexes,
-            mask=mask,
-        )
-
-    @timed
-    def compute_proposals(self, images: torch.Tensor) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
+    def compute_unscaled_proposals(self, images: torch.Tensor) -> Tuple[List[torch.Tensor], torch.Tensor]:
         """
         :param images: A tensor of images of size B x 3 x H x W.
-        :return: A tuple: feature_maps and proposals.
-            - feature_maps is a list of L tensors of size B x C x H x W representing the activations later used for ROI
-              pooling.
-            - proposals is a list of L tensors of size B x H x W x A x (1 + 4) representing region proposals.
+        :return: A tuple:
+            - feature_maps: A list of L tensors of shape B x C x Hi x Wi
+            - unscaled_proposals: A tensor of shape B x R x (1 + 4).
         """
         self.backbone(images)
 
-        feature_maps = [torch.zeros()] * len(self.tracked_feature_maps)
+        feature_maps = [torch.tensor(0) for _ in range(len(self.tracked_feature_maps))]
         for i, tracked_feature_map in reversed(list(enumerate(self.tracked_feature_maps))):
-            feature_maps[i] = self.lateral_connections[i](tracked_feature_map)
-            if i + 1 < len(self.tracked_feature_maps):
-                feature_maps[i] += F.upsample(feature_maps[i+1], size=2, mode="nearest")
-        feature_maps.append(F.interpolate(feature_maps[-1], scale_factor=2))
+            x = self.lateral_connections[i](tracked_feature_map)
+            if i+1 < len(feature_maps):
+                feature_maps[i] = x + F.interpolate(feature_maps[i+1], scale_factor=2, mode="nearest")
+            else:
+                feature_maps[i] = x
 
-        proposals = []
+        feature_maps.append(F.interpolate(feature_maps[-1], scale_factor=0.5))
+
+        unscaled_proposals = []
         for i, feature_map in enumerate(feature_maps):
             proposal = self.region_proposal_head(self.feature_map_transforms[i](feature_map))
             # Shape B x (A * (1 + 4)) x H x W ==> B x H x W x (A * (4 + 1)).
             proposal = torch.permute(proposal, dims=[0, 2, 3, 1])
-            # Shape B x H x W x (A * (4 + 1)) ==> B x H x W x A x (4 + 1)
-            proposals.append(proposal.view(*proposal.shape[:3], len(self.aspect_ratios), 5))
+            # Shape B x H x W x (A * (4 + 1)) ==> B x (H * W * A) x (4 + 1)
+            unscaled_proposals.append(proposal.reshape(images.shape[0], -1, 5))
 
-        return feature_maps, proposals
+        # Shape B x R x 5.
+        unscaled_proposals = torch.cat(unscaled_proposals, dim=1)
+
+        return feature_maps, unscaled_proposals
+
+    @timed
+    def compute_proposal_labels(self, anchors: torch.Tensor, labels: List[List[Dict[str, Any]]]) -> RPNLabels:
+        """
+        :param anchors: A tensor of size R x 4.
+        :param labels: A list of size B containing lists with the ground truth annotations for each image.
+        :return: RPN labels.
+        """
+        objectness_labels = []
+        anchor_ids = []
+        target_bboxes = []
+        for image_labels in labels:
+            gt_bboxes = parse_annotated_bboxes(image_labels)
+            ious = compute_ious(anchors, gt_bboxes)
+
+            best_ious, best_gts = ious.max(dim=1)
+            print("best ious", torch.topk(best_ious, k=10))
+            positive_mask = best_ious >= self.rpn_positive_iou_threshold
+            positive_mask[ious.max(dim=0).indices] = 1
+
+            negative_mask = torch.logical_and(
+                torch.logical_not(positive_mask),
+                best_ious <= self.rpn_negative_iou_threshold,
+            )
+
+            print(f"ground truth boxes", gt_bboxes)
+            print(f"positive label pool {torch.sum(positive_mask)}, negative label pool {torch.sum(negative_mask)}")
+
+            positive_anchor_ids = sample_anchors(anchor_mask=positive_mask, k=self.rpn_positive_regions_per_batch)
+            negative_anchor_ids = sample_anchors(
+                anchor_mask=negative_mask,
+                k=self.rpn_regions_per_batch - positive_anchor_ids.numel()
+            )
+
+            sampled_anchor_ids = torch.cat([positive_anchor_ids, negative_anchor_ids], dim=0)
+            objectness_labels.append(
+                torch.cat(
+                    [
+                        torch.ones_like(positive_anchor_ids, dtype=torch.float),
+                        torch.zeros_like(negative_anchor_ids, dtype=torch.float),
+                    ],
+                    dim=0
+                )
+            )
+            anchor_ids.append(sampled_anchor_ids)
+            target_bboxes.append(gt_bboxes[best_gts[sampled_anchor_ids]])
+
+        return RPNLabels(
+            # B x S
+            objectness_labels=torch.stack(objectness_labels, dim=0),
+            # B x S
+            anchor_ids=torch.stack(anchor_ids, dim=0),
+            # B x S x 4
+            target_bboxes=torch.stack(target_bboxes, dim=0),
+        )
 
     @timed
     def compute_regression_box_loss(
         self,
-        predicted_bboxes: torch.Tensor,
+        unscaled_predicted_bboxes: torch.Tensor,
         ground_truth_bboxes: torch.Tensor,
         reference_bboxes: torch.Tensor,
         weights: Union[float, torch.Tensor] = 1.0,
     ) -> torch.Tensor:
         """
-        :param predicted_bboxes: N x 4 tensor representing the centered bbox coordinates of the predictions.
-        :param ground_truth_bboxes: N x 4 tensor representing the centered bbox coordinates of the ground truth labels.
-        :param reference_bboxes: N x 4 tensor representing the centered coordinates of the reference bboxes.
-        :param weights: N tensors representing individual weights (or mask).
+        In the following X is either B x S (for the RPN loss) or P (for the detection bounding box loss).
+        :param unscaled_predicted_bboxes: X x 4 tensor representing the centered bbox coordinates of the predictions.
+        # TODO(pauldb): If these comments are true, why do we center the bboxes in this function?
+        :param ground_truth_bboxes: X x 4 tensor representing the centered bbox coordinates of the ground truth labels.
+        :param reference_bboxes: X x 4 tensor representing the centered coordinates of the reference bboxes.
+        :param weights: X tensors representing individual weights (or mask).
         :return:
         """
+        unscaled_predicted_bboxes = unscaled_predicted_bboxes.cuda()
+        ground_truth_bboxes = ground_truth_bboxes.cuda()
+        reference_bboxes = reference_bboxes.cuda()
+        weights = weights.cuda() if isinstance(weights, torch.Tensor) else weights
+
+        ground_truth_bboxes = center_bboxes(ground_truth_bboxes)
+        reference_bboxes = center_bboxes(reference_bboxes)
+
         location_loss = F.smooth_l1_loss(
-            (predicted_bboxes[:, 0:2] - reference_bboxes[:, 0:2]) / reference_bboxes[:, 2:4],
-            (ground_truth_bboxes[:, 0:2] - reference_bboxes[:, 0:2]) / reference_bboxes[:, 2:4],
+            unscaled_predicted_bboxes[..., 0:2],
+            (ground_truth_bboxes[..., 0:2] - reference_bboxes[..., 0:2]) / reference_bboxes[..., 2:4],
             reduction="none",
         )
         size_loss = F.smooth_l1_loss(
-            torch.log(predicted_bboxes[:, 2:4] / reference_bboxes[:, 2:4]),
-            torch.log(ground_truth_bboxes[:, 2:4] / reference_bboxes[:, 2:4]),
+            unscaled_predicted_bboxes[..., 2:4],
+            torch.log(ground_truth_bboxes[..., 2:4] / reference_bboxes[..., 2:4]),
             reduction="none",
         )
         bbox_loss = torch.mean(
-            torch.cat([location_loss, size_loss], dim=1).mean(dim=1) * weights
+            torch.cat([location_loss, size_loss], dim=-1).mean(dim=-1) * weights
         )
         return bbox_loss
 
     @timed
-    def compute_proposals_loss(self, proposals: List[torch.Tensor], rpn_labels: RPNLabels) -> torch.Tensor:
+    def compute_rpn_loss(
+        self,
+        unscaled_proposals: torch.Tensor,
+        anchors: torch.Tensor,
+        rpn_labels: RPNLabels,
+    ) -> torch.Tensor:
         """
-        :param proposals: A tensor of region proposals of size B x L x H x W x A x (1 + 4).
+        :param unscaled_proposals: A tensor of region proposals of size B x R x (1 + 4).
+        :param anchors: A tensor of anchors of size R x 4.
         :param rpn_labels: A RPNLabels struct containing a sampled set of labels for computing the loss.
         :return: A scalar tensor representing the loss.
         """
-        predictions = []
-        predicted_bboxes = []
-        for anchor_index in rpn_labels.anchor_indexes:
-            proposal = proposals[anchor_index.level][anchor_index.feature_map_index]
-            predictions.append(proposal[0])
-            predicted_bboxes.append(proposal[1:])
-
-        predictions = torch.stack(predictions, dim=0)
-        predicted_bboxes = torch.stack(predicted_bboxes, dim=0)
+        anchor_index = torch.unsqueeze(rpn_labels.anchor_ids, dim=2).repeat(1, 1, 5).cuda()
+        sampled_unscaled_proposals = torch.gather(unscaled_proposals, dim=1, index=anchor_index)
+        sampled_anchors = anchors[rpn_labels.anchor_ids]
 
         objectness_loss = F.binary_cross_entropy_with_logits(
-            input=predictions,
-            target=rpn_labels.objectness_labels,
-            weight=rpn_labels.mask,
+            input=sampled_unscaled_proposals[:, :, 0],
+            target=rpn_labels.objectness_labels.cuda(),
             reduction="mean",
         )
         bbox_loss = self.compute_regression_box_loss(
-            predicted_bboxes=predicted_bboxes,
-            ground_truth_bboxes=rpn_labels.gt_bboxes,
-            reference_bboxes=rpn_labels.anchor_bboxes,
-            weights=rpn_labels.mask * rpn_labels.objectness_labels,
+            unscaled_predicted_bboxes=sampled_unscaled_proposals[:, :, 1:],
+            ground_truth_bboxes=rpn_labels.target_bboxes,
+            reference_bboxes=sampled_anchors,
+            weights=rpn_labels.objectness_labels,
         )
 
         return objectness_loss + self.bbox_loss_weight * bbox_loss
 
     @timed
-    def select_rois(self, input_proposals: List[torch.Tensor]) -> List[torch.Tensor]:
+    def select_rois(self, unscaled_proposals: torch.Tensor, anchors: torch.Tensor) -> List[torch.Tensor]:
         """
-        :param input_proposals: A list of L tensor of dense region proposals of size B x H x W x A x (1 + 4)).
-        :return: rois: A list of tensors of size Pi x 4 proposals.
+        :param unscaled_proposals: A tensor of B x R x (1 + 4) unscaled proposals.
+        :param anchors: A tensor of R x 4 of anchors.
+        :return: rois: A list of B tensors of size Pi x 4 proposals.
         """
+        centered_anchors = center_bboxes(anchors)
+        repeated_centered_anchors = torch.unsqueeze(centered_anchors, dim=0).repeat(self.num_images_per_batch, 1, 1)
+
+        objectness_scores = unscaled_proposals[..., 0].cpu()
+        print("unscaled proposals h/w", torch.max(unscaled_proposals[..., 3]), torch.max(unscaled_proposals[..., 4]))
+        proposals = scale_bboxes(unscaled_proposals[..., 1:], repeated_centered_anchors.cuda()).cpu()
+        print("scaled proposals h/w", torch.max(proposals[..., 2]), torch.max(proposals[..., 3]))
+
         max_rois_per_image = self.max_train_rois_per_image if self.training else self.max_eval_rois_per_image
-        image_proposals = [[] for _ in range(self.num_images_per_batch)]
-        for level_proposals in input_proposals:
-            for i in range(self.num_images_per_batch):
-                p = level_proposals[i].view(-1, 5)
-                scores = p[:, 0]
-                bboxes = p[:, 1:]
-                image_proposals[i].extend(
-                    (score, BBox.from_array(bbox, centered=True)) for score, bbox in zip(scores, bboxes)
-                )
+        max_nms_candidates = self.max_train_nms_candidates if self.training else self.max_eval_nms_candidates
+        selected_rois = []
+        for i, image_proposals in enumerate(proposals):
+            image_proposals = image_proposals[torch.argsort(objectness_scores[i], descending=True)[:max_nms_candidates]]
 
-        rois = [[] for _ in range(self.num_images_per_batch)]
-        for i, proposals in enumerate(sorted(image_proposals, reverse=True)):
-            for _, bbox in proposals:
-                valid = True
-                for selected_bbox in rois:
-                    if bbox.iou(selected_bbox) >= self.nms_iou_threshold:
-                        valid = False
+            image_rois = uncenter_bboxes(image_proposals)
+            ious = compute_ious(image_rois, image_rois)
+            selected_indices = [0]
+            for j in range(1, max_nms_candidates):
+                if torch.max(ious[j, selected_indices]).item() < self.nms_iou_threshold:
+                    selected_indices.append(j)
+                    if len(selected_indices) >= max_rois_per_image:
                         break
 
-                if valid:
-                    rois.append(bbox)
-                    if len(rois) >= max_rois_per_image:
-                        break
+            selected_rois.append(image_rois[selected_indices])
 
-        return [
-            torch.stack([bbox.to_array(centered=True) for bbox in image_rois], dim=0)
-            for image_rois in rois
-        ]
+        return selected_rois
 
     @timed
     def compute_detection_labels(
         self,
         rois: List[torch.Tensor],
         labels: List[List[Dict[str, Any]]],
-    ) -> torch.Tensor:
+    ) -> List[torch.Tensor]:
         """
         :param rois: A list of B tensors of size Pi x 4 .
         :param labels: A list of size B of ground truth annotation metadata.
-        :return: A tensor of size (B x P) x (1 + 4) labels.
+        :return: A list of B tensors of size Pi x 5.
         """
         detection_labels = []
 
-        for i, image_rois in enumerate(rois):
-            for roi in image_rois:
-                roi_bbox = BBox.from_array(roi, centered=False)
-                max_iou = 0
-                argmax_iou = 0
-                for j, annotation in enumerate(labels[i]):
-                    gt_bbox = BBox.from_array(annotation["bbox"], centered=False)
-                    iou = roi_bbox.roi(gt_bbox)
-                    if iou >= max_iou:
-                        max_iou = iou
-                        argmax_iou = j
+        for image_rois, image_labels in zip(rois, labels):
+            gt_bboxes = parse_annotated_bboxes(image_labels)
+            gt_categories = parse_annotated_categories(image_labels)
+            ious = compute_ious(image_rois, gt_bboxes)
 
-                if max_iou >= self.detection_iou_threshold:
-                    gt_detection = labels[i][argmax_iou]
-                    detection_labels.append(
-                        torch.tensor([
-                            gt_detection["category_id"],
-                            *BBox.from_array(gt_detection["bbox"], centered=False).to_array(centered=True)
-                        ])
-                    )
-                else:
-                    detection_labels.append(torch.tensor([0, 1, 1, 1, 1], dtype=torch.float))
+            best_ious, best_gts = torch.max(ious, dim=1)
+            detection_labels.append(
+                torch.cat(
+                    [
+                        torch.where(best_ious >= self.detection_iou_threshold, gt_categories[best_gts], 0).view(-1, 1),
+                        gt_bboxes[best_gts]
+                    ],
+                    dim=1,
+                )
+            )
 
-        return torch.stack(detection_labels, dim=0)
+        return detection_labels
 
     @timed
     def compute_detections(
@@ -479,35 +492,58 @@ class Detector(nn.Module):
         """
         rois_by_level = [[] for _ in range(MAX_LEVEL)]
         perm_by_level = [[] for _ in range(MAX_LEVEL)]
+        all_levels = []
         index = 0
-        for image_rois in rois:
+
+        max_area = 0
+        for image_index, image_rois in enumerate(rois):
             for roi in image_rois:
                 # TODO(pauldb): Check the level distribution assignment.
-                level = max(min(2 + int(math.log(math.sqrt(roi[-2] * roi[-1]) / 224, base=2)), MAX_LEVEL-1), 0)
-                rois_by_level[level].append(roi)
+                level = max(min(2 + int(math.log(math.sqrt(roi[-2] * roi[-1]) / 224, 2)), MAX_LEVEL-1), 0)
+                max_area = max(max_area, roi[-2].item() * roi[-1].item())
+                all_levels.append(level)
+                rois_by_level[level].append([image_index, roi[0], roi[1], roi[0]+roi[2], roi[1]+roi[3]])
                 perm_by_level[level].append(index)
                 index += 1
 
+        print(
+            max_area,
+            sum([len(level_rois) for level_rois in rois_by_level]),
+            [(feature_map.size(), len(level_rois)) for feature_map, level_rois in zip(feature_maps, rois_by_level)]
+        )
+
+        start_time = time.time()
         pooled_feature_maps = []
         for level, (feature_map, level_rois) in enumerate(zip(feature_maps, rois_by_level)):
+            level_start_time = time.time()
             pooled_feature_maps.append(
                 O.roi_align(
                     feature_map,
-                    level_rois,
+                    torch.tensor(level_rois, device="cuda"),
                     output_size=7,
                     spatial_scale=1 / (4 * (1 << level)),
                     aligned=True,
                 )
             )
+            print(f"Level {level} took {time.time() - level_start_time}")
 
+        end_time = time.time()
+        print(f"Computing ROI align took {end_time - start_time}")
+
+        start_time = end_time
         # Detection inference is performed by stacking level wise feature maps, but we must revert to the original
         # order in which the ground truth labels and ROIs (which act as anchors during detection) are defined.
-        detection_feature_maps = self.detection_trunk(torch.cat(pooled_feature_maps, dim=0))
+        pooled_feature_maps = torch.cat(pooled_feature_maps, dim=0)
         perm = torch.cat([torch.tensor(x) for x in perm_by_level], dim=0)
-        detection_feature_maps[perm] = detection_feature_maps.clone()
+        pooled_feature_maps[perm] = pooled_feature_maps.clone()
 
+        detection_feature_maps = self.detection_trunk(pooled_feature_maps)
         classification_scores = self.classification_head(detection_feature_maps)
         bboxes = self.regression_head(detection_feature_maps).view(-1, self.num_classes, 4)
+
+        end_time = time.time()
+        print(f"Remaining inference took {end_time - start_time}")
+
         return classification_scores, bboxes
 
     @timed
@@ -516,44 +552,82 @@ class Detector(nn.Module):
         detected_class_logits: torch.Tensor,
         detected_bboxes: torch.Tensor,
         rois: List[torch.Tensor],
-        detection_labels: torch.Tensor,
+        detection_labels: List[torch.Tensor],
     ) -> torch.Tensor:
         """
-        :param detected_class_logits: A tensor of size (B * P).
+        :param detected_class_logits: A tensor of size (B * P) x (K + 1).
         :param detected_bboxes: A tensor of size (B * P) X K x 4
         :param rois: A list of B tensors of size Pi x 4.
-        :param detection_labels: A tensor of size (B * P) x (1 + 4) representing ground truth detection labels.
+        :param detection_labels: A list of B tensors of size Pi x (1 + 4) representing ground truth detection labels.
         :return: A scalar tensor representing the loss.
         """
-        class_labels = detection_labels[:, 0]
+        rois = torch.cat(rois, dim=0)
+        detection_labels = torch.cat(detection_labels, dim=0)
+
+        class_labels = detection_labels[:, 0].to(dtype=torch.long, device="cuda")
+        print(torch.min(class_labels), torch.max(class_labels))
         classification_loss = F.cross_entropy(detected_class_logits, class_labels)
 
         mask = class_labels > 0
         bbox_loss = self.compute_regression_box_loss(
-            predicted_bboxes=detected_bboxes[mask, class_labels[mask]-1, :],
+            unscaled_predicted_bboxes=detected_bboxes[mask, class_labels[mask]-1, :],
             ground_truth_bboxes=detection_labels[mask, 1:],
-            reference_bboxes=torch.cat(rois, dim=0),
+            reference_bboxes=rois[mask],
         )
         return classification_loss + bbox_loss
 
-    def forward(self, images: torch.Tensor, labels: List[List[Dict[str, Any]]]) -> Dict[str, Any]:
+    def forward(self, batch: Batch) -> Dict[str, Any]:
         """
-        :param images: A list of images of size B x 3 x H x W representing a batch of images.
-        :param labels: A list of B metadata entries representing ground truth classes and bounding boxes.
-        :return:
+        :param batch: A batch of training examples.
         """
-        feature_maps, proposals = self.compute_proposals(images)
-        rpn_labels = self.compute_proposal_labels(images, labels)
-        proposal_loss = self.compute_proposals_loss(proposals, rpn_labels)
+        batch = batch.to(torch.device("cuda"))
 
-        rois = self.select_rois(proposals)
+        start_time = time.time()
+        anchors = self.anchor_generator.generate(max_width=batch.images.shape[-1], max_height=batch.images.shape[-2])
+        end_time = time.time()
+        # print(f"Generating anchors took {end_time - start_time}")
 
-        detections_labels = self.compute_detection_labels(rois, labels)
-        class_logits, detected_bboxes = self.compute_detections(feature_maps, rois)
-        detection_loss = self.compute_detection_loss(class_logits, detected_bboxes, rois, detections_labels)
+        start_time = end_time
+        feature_maps, unscaled_proposals = self.compute_unscaled_proposals(images=batch.images)
+        end_time = time.time()
+        # print(f"computing unscaled proposals took {end_time - start_time}")
+
+        start_time = end_time
+        rpn_labels = self.compute_proposal_labels(anchors=anchors, labels=batch.labels)
+        end_time = time.time()
+        # print(f"computing proposal labels took {end_time - start_time}")
+
+        start_time = end_time
+        proposal_loss = self.compute_rpn_loss(
+            unscaled_proposals=unscaled_proposals,
+            anchors=anchors,
+            rpn_labels=rpn_labels,
+        )
+        end_time = time.time()
+        # print(f"computing proposal loss took {end_time - start_time}")
+
+        start_time = end_time
+        rois = self.select_rois(unscaled_proposals=unscaled_proposals.detach(), anchors=anchors)
+        end_time = time.time()
+        # print(f"selecting rois took {end_time - start_time}")
+
+        # start_time = end_time
+        # detections_labels = self.compute_detection_labels(rois, batch.labels)
+        # end_time = time.time()
+        # # print(f"compute detection labels took {end_time - start_time}")
+        #
+        # start_time = end_time
+        # class_logits, detected_bboxes = self.compute_detections(feature_maps, rois)
+        # end_time = time.time()
+        # print(f"compute detections took {end_time - start_time}")
+        #
+        # start_time = end_time
+        # detection_loss = self.compute_detection_loss(class_logits, detected_bboxes, rois, detections_labels)
+        # end_time = time.time()
+        # # print(f"compute detection loss took {end_time - start_time}")
 
         return {
-            "loss": proposal_loss + detection_loss,
+            "loss": proposal_loss, # + detection_loss,
             "time_stats": {k: np.mean(v) for k, v in self.time_stats.items()}
         }
 

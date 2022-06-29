@@ -3,8 +3,6 @@ from __future__ import annotations
 from typing import List
 from typing import NamedTuple
 
-import torch
-
 
 class BBox(NamedTuple):
     x: float

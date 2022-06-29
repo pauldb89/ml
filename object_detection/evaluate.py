@@ -14,10 +14,10 @@ from object_detection.detector import Detector
 
 def evaluate(step: int, model: Detector, data_loader: DataLoader) -> None:
     detections = []
-    for images, labels in data_loader:
-        predictions = model.eval_forward(images)
-        for image_classes, image_bboxes, image_labels in zip(predictions["classes"], predictions["bboxes"], labels):
-            image_id = labels[0]["image_id"] if labels else FALLBACK_IMAGE_ID
+    for batch in data_loader:
+        preds = model.eval_forward(batch.images)
+        for image_classes, image_bboxes, image_labels in zip(preds["classes"], preds["bboxes"], batch.labels):
+            image_id = batch.labels[0]["image_id"] if batch.labels else FALLBACK_IMAGE_ID
             for predicted_class, bbox in zip(image_classes, image_bboxes):
                 detections.append({
                     "category_id": predicted_class,
