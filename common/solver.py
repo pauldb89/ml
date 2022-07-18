@@ -1,7 +1,7 @@
 import enum
 import time
 from collections import deque
-from typing import Optional
+from typing import Optional, Callable, Dict, Any
 from typing import Protocol
 
 import numpy as np
@@ -98,6 +98,8 @@ class Solver:
         evaluate_at_start: bool = False,
         evaluate_at_end: bool = True,
         log_every_n_steps: Optional[int] = 10,
+        summarize_fn: Optional[Callable[[int, int, Dict[str, Any]], None]] = None,
+        summarize_every_n_steps: Optional[int] = None,
     ):
         self.model = model
         self.optimizer = optimizer
@@ -110,6 +112,8 @@ class Solver:
         self.evaluate_at_start = evaluate_at_start
         self.evaluate_at_end = evaluate_at_end
         self.log_every_n_steps = log_every_n_steps
+        self.summarize_fn = summarize_fn
+        self.summarize_every_n_steps = summarize_every_n_steps
 
     def execute(self):
         if self.evaluate_at_start:
@@ -141,6 +145,9 @@ class Solver:
                 timer.end(TimeKey.FORWARD)
 
                 timer.start(TimeKey.BACKWARD)
+                # TODO(pauldb): Remove this and uncomment below
+                # loss.backward()
+                # self.optimizer.step()
                 scaler.scale(loss).backward()
                 scaler.step(self.optimizer)
                 scaler.update()
@@ -148,6 +155,12 @@ class Solver:
                 self.lr_scheduler.step()
                 self.optimizer.zero_grad()
                 timer.end(TimeKey.BACKWARD)
+
+                if (is_root_process() and
+                        self.summarize_fn is not None and
+                        self.summarize_every_n_steps is not None and
+                        step % self.summarize_every_n_steps == 0):
+                    self.summarize_fn(step, epoch, output)
 
                 if is_root_process() and self.log_every_n_steps is not None and step % self.log_every_n_steps == 0:
                     throughput.end((step+1) * batch.size() * world_size())

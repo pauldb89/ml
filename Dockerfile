@@ -52,5 +52,4 @@ RUN cd /opt && \
     cd /opt && \
     rm -rf cocoapi
 
-#ENV PYTHONPATH="/ml"
-ENV PYTHONPATH="/detectron2"
+ENV PYTHONPATH="/ml"
