@@ -13,8 +13,8 @@ def main():
     args = parser.parse_args()
 
     command = (
-        f"fswatch -o {args.source_dir} | xargs -n1 -I{{}} rsync -avz {args.source_dir} "
-        f"{args.target_username}@{args.target_host}:/home/{args.target_username}/{args.target_dir}"
+        f"fswatch -o {args.source_dir} | xargs -n1 -I{{}} rsync -avz --exclude={args.source_dir}/.git/ "
+        f"{args.source_dir} {args.target_username}@{args.target_host}:/home/{args.target_username}/{args.target_dir}"
     )
     print(f"Executing {command}")
     os.system(command)
