@@ -1,8 +1,8 @@
 from typing import Optional
 
 import torch
+from torch import nn
 from torch.distributed import get_rank
-from torch.nn.parallel import DistributedDataParallel
 from torch.utils.data import DataLoader
 from torch.nn import functional as F
 
@@ -10,8 +10,8 @@ from common.distributed import print_once
 
 
 def evaluate(
-    step: int,
-    model: DistributedDataParallel,
+    step: str,
+    model: nn.Module,
     data_loader: DataLoader,
     log_progress_every_n_steps: Optional[int] = 30,
 ) -> None:
@@ -26,7 +26,7 @@ def evaluate(
         for batch_idx, batch in enumerate(data_loader, start=1):
             batch = batch.to(torch.device("cuda"))
 
-            predictions = model.module.eval_forward(batch.images)
+            predictions = model.eval_forward(batch.images)
             _, indices = torch.topk(predictions, k=5, dim=1)
 
             total += torch.numel(batch.classes)

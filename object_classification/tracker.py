@@ -4,11 +4,13 @@ from argparse import ArgumentParser
 import torch.distributed
 import torchvision
 from torch.nn.parallel import DistributedDataParallel
+from torchvision.models import VGG16_BN_Weights, ViT_B_16_Weights
 
 from object_classification.data import get_eval_data_loader
 from common.distributed import print_once
 from common.distributed import world_size
 from object_classification.evaluate import evaluate
+from object_classification.models.model_config import MODEL_CONFIGS
 from object_classification.models.model_wrapper import PretrainedWrapper
 
 
@@ -21,17 +23,28 @@ def main():
     parser.add_argument("--dataset_name", type=str, default="imagenet", help="Which dataset to use")
     parser.add_argument("--batch_size", type=int, default=128, help="Batch size")
     parser.add_argument("--num_workers", type=int, default=5, help="Number of workers")
+    parser.add_argument("--model", type=str, required=True, choices=["vgg16bn", "vit16b"], help="Which model to use")
     args = parser.parse_args()
+
+    model_config = MODEL_CONFIGS[args.model]
 
     data_loader = get_eval_data_loader(
         dataset_name=args.dataset_name,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
+        resize_dim=model_config.eval_resize_dim,
+        crop_dim=model_config.eval_crop_dim,
     )
     print_once(f"Eval dataset has {len(data_loader.dataset) * world_size()} examples")
 
     torch.hub.set_dir(f"/root/.cache/torch/{local_rank}")
-    model = torchvision.models.vgg16_bn(pretrained=True)
+    if args.model == "vgg16bn":
+        model = torchvision.models.vgg16_bn(weights=VGG16_BN_Weights.IMAGENET1K_V1)
+    elif args.model == "vit16b":
+        model = torchvision.models.vit_b_16(weights=ViT_B_16_Weights.IMAGENET1K_V1)
+    else:
+        raise ValueError(f"Unsupported model {args.model}")
+
     model = PretrainedWrapper(model)
     model.cuda()
 

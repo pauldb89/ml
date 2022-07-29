@@ -14,4 +14,5 @@ MODEL_CONFIGS = {
     "vgg16bn": ModelConfig(train_resize_dim=224, eval_resize_dim=256, eval_crop_dim=224, use_batch_norm=True),
     "inception_v3": ModelConfig(train_resize_dim=299, eval_resize_dim=299, eval_crop_dim=299, use_batch_norm=True),
     "resnet50": ModelConfig(train_resize_dim=224, eval_resize_dim=256, eval_crop_dim=224, use_batch_norm=True),
+    "vit16b": ModelConfig(train_resize_dim=224, eval_resize_dim=256, eval_crop_dim=224, use_batch_norm=False),
 }

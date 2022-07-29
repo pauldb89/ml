@@ -9,3 +9,8 @@ class PretrainedWrapper(nn.Module):
 
     def eval_forward(self, images: torch.Tensor) -> torch.Tensor:
         return self.model(images)
+
+
+class ModelAverageWrapper(torch.optim.swa_utils.AveragedModel):
+    def eval_forward(self, *args, **kwargs):
+        return self.module.eval_forward(*args, **kwargs)

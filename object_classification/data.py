@@ -10,9 +10,11 @@ from typing import Tuple
 
 import torch
 from torch.utils.data import DataLoader
-from torch.utils.data import RandomSampler
+from torch.utils.data import DistributedSampler
 from torchvision.datasets import ImageFolder
 from torchvision.datasets.folder import is_image_file
+from torchvision.transforms import InterpolationMode
+from torchvision.transforms import autoaugment
 from torchvision.transforms import transforms
 
 from consts import IMAGENET_MEAN
@@ -79,6 +81,7 @@ def get_train_data_loader(
             transform=transforms.Compose([
                 transforms.RandomResizedCrop(resize_dim),
                 transforms.RandomHorizontalFlip(),
+                autoaugment.RandAugment(interpolation=InterpolationMode.BILINEAR),
                 transforms.ToTensor(),
                 transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
             ])
@@ -87,7 +90,7 @@ def get_train_data_loader(
         return DataLoader(
             dataset=dataset,
             batch_size=batch_size,
-            sampler=RandomSampler(data_source=dataset),
+            sampler=DistributedSampler(dataset=dataset),
             num_workers=num_workers,
             collate_fn=collate_fn,
             drop_last=True,

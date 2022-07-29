@@ -6,20 +6,21 @@ import torch
 from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
 from torch.distributed import all_gather_object
-from torch.nn.parallel import DistributedDataParallel
 from torch.utils.data import DataLoader
 
-from common.distributed import is_root_process, print_once
+from common.distributed import is_root_process
+from common.distributed import print_once
 from common.distributed import world_size
 from object_detection.coco_consts import EVAL_ANNOTATION_FILE
 from object_detection.data import Batch
+from object_detection.detector import Detector
 
 
 def rescale_bbox(bbox: List[float], x_scale: float, y_scale: float) -> List[float]:
     return [bbox[0] * x_scale, bbox[1] * y_scale, bbox[2] * x_scale, bbox[3] * y_scale]
 
 
-def evaluate(step: int, model: DistributedDataParallel, data_loader: DataLoader) -> None:
+def evaluate(step: str, model: Detector, data_loader: DataLoader) -> None:
     print_once(f"Running inference on eval dataset at step {step}")
     start_time = time.time()
     category_mapping = data_loader.dataset.categories
@@ -33,7 +34,7 @@ def evaluate(step: int, model: DistributedDataParallel, data_loader: DataLoader)
             if batch_id % 10 == 0:
                 print_once(f"Finished evaluating {world_size() * batch_id * num_images} examples")
 
-            result = model.module.eval_forward(Batch(images=batch.images, labels=None, image_sizes=batch.image_sizes))
+            result = model.eval_forward(Batch(images=batch.images, labels=None, image_sizes=batch.image_sizes))
             for i in range(num_images):
                 labels = batch.labels[i]
                 image_id = labels["image_id"]

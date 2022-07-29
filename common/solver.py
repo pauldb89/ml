@@ -6,6 +6,7 @@ from typing import Protocol
 
 import numpy as np
 import torch.optim
+from torch import nn
 from torch.cuda.amp import GradScaler
 from torch.cuda.amp import autocast
 from torch.nn.parallel import DistributedDataParallel
@@ -80,7 +81,7 @@ class Throughput:
 
 
 class EvalFunction(Protocol):
-    def __call__(self, model: DistributedDataParallel, step: int) -> None:
+    def __call__(self, step: str, model: nn.Module) -> None:
         ...
 
 
@@ -100,6 +101,9 @@ class Solver:
         log_every_n_steps: Optional[int] = 10,
         summarize_fn: Optional[Callable[[int, int, Dict[str, Any]], None]] = None,
         summarize_every_n_steps: Optional[int] = None,
+        max_grad_norm: Optional[float] = None,
+        avg_model: Optional[nn.Module] = None,
+        avg_model_steps: Optional[int] = 32,
     ):
         self.model = model
         self.optimizer = optimizer
@@ -114,10 +118,13 @@ class Solver:
         self.log_every_n_steps = log_every_n_steps
         self.summarize_fn = summarize_fn
         self.summarize_every_n_steps = summarize_every_n_steps
+        self.max_grad_norm = max_grad_norm
+        self.avg_model = avg_model
+        self.avg_model_steps = avg_model_steps
 
     def execute(self):
         if self.evaluate_at_start:
-            self.eval_fn(model=self.model, step=0)
+            self.eval_fn(model=self.model.module, step="0")
 
         self.optimizer.zero_grad()
         scaler = GradScaler()
@@ -145,16 +152,19 @@ class Solver:
                 timer.end(TimeKey.FORWARD)
 
                 timer.start(TimeKey.BACKWARD)
-                # TODO(pauldb): Remove this and uncomment below
-                # loss.backward()
-                # self.optimizer.step()
                 scaler.scale(loss).backward()
+                if self.max_grad_norm is not None:
+                    scaler.unscale_(self.optimizer)
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
                 scaler.step(self.optimizer)
                 scaler.update()
 
                 self.lr_scheduler.step()
                 self.optimizer.zero_grad()
                 timer.end(TimeKey.BACKWARD)
+
+                if self.avg_model is not None and self.avg_model_steps is not None and step % self.avg_model_steps == 0:
+                    self.avg_model.update_parameters(self.model)
 
                 if (is_root_process() and
                         self.summarize_fn is not None and
@@ -178,11 +188,15 @@ class Solver:
                     throughput.start((step+1) * batch.size() * world_size())
 
                 if self.evaluate_every_n_steps is not None and step > 0 and step % self.evaluate_every_n_steps == 0:
-                    self.eval_fn(model=self.model, step=step)
+                    self.eval_fn(model=self.model.module, step=f"{step}")
+                    if self.avg_model is not None:
+                        self.eval_fn(model=self.avg_model, step=f"{step} SWAG")
 
                 timer.start(TimeKey.DATA_LOAD)
 
                 step += 1
 
         if self.evaluate_at_end:
-            self.eval_fn(model=self.model, step=self.max_steps)
+            self.eval_fn(model=self.model.module, step=f"{self.max_steps}")
+            if self.avg_model is not None:
+                self.eval_fn(model=self.avg_model, step=f"{self.max_steps} SWAG")

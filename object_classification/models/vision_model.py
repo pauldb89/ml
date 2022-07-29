@@ -14,6 +14,7 @@ class VisionModel(nn.Module):
     def __init__(self, *args, **kwargs):
         super().__init__()
 
+        self.label_smoothing = kwargs.pop("label_smoothing", 0.0)
         self.layers = self.make_layers(*args, **kwargs)
 
     def make_layers(self, *args, **kwargs) -> nn.Module:
@@ -23,7 +24,7 @@ class VisionModel(nn.Module):
         batch = batch.to(torch.device("cuda"))
         logits = self.layers(batch.images)
         return {
-            "loss": F.cross_entropy(logits, batch.classes),
+            "loss": F.cross_entropy(logits, batch.classes, label_smoothing=self.label_smoothing),
         }
 
     def eval_forward(self, images: torch.Tensor) -> torch.Tensor:

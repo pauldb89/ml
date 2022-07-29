@@ -101,11 +101,11 @@ timm==0.5.4
 toml==0.10.2
 tomli==2.0.1
 # torch==1.10.0+cu113
-torch==1.11
+torch==1.12
 torch-lucent==0.1.8
 torchinfo==1.6.5
 # torchvision==0.11.1+cu113
-torchvision==0.12
+torchvision==0.13
 tqdm==4.64.0
 traitlets==5.1.1
 typing-extensions==4.2.0
