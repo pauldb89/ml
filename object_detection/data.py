@@ -158,7 +158,7 @@ class Batch(NamedTuple):
     def to(self, device: torch.device) -> Batch:
         return Batch(images=self.images.to(device), labels=self.labels, image_sizes=self.image_sizes)
 
-    def size(self) -> int:
+    def __len__(self) -> int:
         return len(self.image_sizes)
 
 

@@ -17,8 +17,8 @@ from torchvision.transforms import InterpolationMode
 from torchvision.transforms import autoaugment
 from torchvision.transforms import transforms
 
-from consts import IMAGENET_MEAN
-from consts import IMAGENET_STD
+from common.consts import IMAGENET_MEAN
+from common.consts import IMAGENET_STD
 from common.distributed import get_rank
 from common.distributed import print_once
 from common.distributed import world_size
@@ -42,7 +42,7 @@ class Batch(NamedTuple):
     images: torch.Tensor
     classes: torch.Tensor
 
-    def size(self) -> int:
+    def __len__(self) -> int:
         return self.classes.numel()
 
     def to(self, device: torch.device) -> Batch:

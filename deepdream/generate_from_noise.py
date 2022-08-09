@@ -12,8 +12,8 @@ from lucent.optvis import transform
 from torch import nn
 from torchvision.transforms import transforms
 
-from consts import IMAGENET_MEAN
-from consts import IMAGENET_STD
+from common.consts import IMAGENET_MEAN
+from common.consts import IMAGENET_STD
 
 MODEL_LOADERS = {
     "inception_v3": lambda: torchvision.models.inception_v3(pretrained=True, aux_logits=False),

@@ -4,7 +4,6 @@ from typing import Callable
 from typing import Dict
 from typing import List
 from typing import Optional
-from typing import Tuple
 
 import PIL
 import PIL.Image
@@ -18,8 +17,8 @@ from torch import nn
 from torch.nn import functional as F
 from torchvision.transforms import transforms
 
-from consts import IMAGENET_MEAN
-from consts import IMAGENET_STD
+from common.consts import IMAGENET_MEAN
+from common.consts import IMAGENET_STD
 from deepdream.generate_from_noise import create_loss_fn
 
 DEFAULT_STYLE_IMAGE = (

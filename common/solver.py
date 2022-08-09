@@ -1,4 +1,5 @@
 import enum
+import os
 import time
 from collections import deque
 from typing import Optional, Callable, Dict, Any
@@ -104,6 +105,8 @@ class Solver:
         max_grad_norm: Optional[float] = None,
         avg_model: Optional[nn.Module] = None,
         avg_model_steps: Optional[int] = 32,
+        snapshot_dir: Optional[str] = None,
+        snapshot_every_n_steps: Optional[int] = None,
     ):
         self.model = model
         self.optimizer = optimizer
@@ -121,6 +124,8 @@ class Solver:
         self.max_grad_norm = max_grad_norm
         self.avg_model = avg_model
         self.avg_model_steps = avg_model_steps
+        self.snapshot_dir = snapshot_dir
+        self.snapshot_every_n_steps = snapshot_every_n_steps
 
     def execute(self):
         if self.evaluate_at_start:
@@ -173,7 +178,7 @@ class Solver:
                     self.summarize_fn(step, epoch, output)
 
                 if is_root_process() and self.log_every_n_steps is not None and step % self.log_every_n_steps == 0:
-                    throughput.end((step+1) * batch.size() * world_size())
+                    throughput.end((step+1) * len(batch) * world_size())
 
                     print(
                         f"Step {step}: Epoch {epoch}\t"
@@ -185,12 +190,19 @@ class Solver:
                         f"Throughput {throughput.get():5f} examples/second"
                     )
 
-                    throughput.start((step+1) * batch.size() * world_size())
+                    throughput.start((step+1) * len(batch) * world_size())
 
                 if self.evaluate_every_n_steps is not None and step > 0 and step % self.evaluate_every_n_steps == 0:
                     self.eval_fn(model=self.model.module, step=f"{step}")
                     if self.avg_model is not None:
                         self.eval_fn(model=self.avg_model, step=f"{step} SWAG")
+
+                if (is_root_process()
+                        and self.snapshot_dir is not None and self.snapshot_every_n_steps is not None
+                        and step > 0 and step % self.snapshot_every_n_steps == 0):
+                    torch.save(self.model.module.state_dict(), os.path.join(self.snapshot_dir, f"step-{step}.pt"))
+                    if self.avg_model is not None:
+                        torch.save(self.avg_model.state_dict(), os.path.join(self.snapshot_dir, f"step-{step}-avg.pt"))
 
                 timer.start(TimeKey.DATA_LOAD)
 
@@ -200,3 +212,10 @@ class Solver:
             self.eval_fn(model=self.model.module, step=f"{self.max_steps}")
             if self.avg_model is not None:
                 self.eval_fn(model=self.avg_model, step=f"{self.max_steps} SWAG")
+
+        if (is_root_process()
+                and self.snapshot_dir is not None and self.snapshot_every_n_steps is not None):
+            torch.save(self.model.module.state_dict(), os.path.join(self.snapshot_dir, "final.pt"))
+            if self.avg_model is not None:
+                torch.save(self.avg_model.state_dict(), os.path.join(self.snapshot_dir, "final-avg.pt"))
+
