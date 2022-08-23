@@ -1,14 +1,10 @@
 from __future__ import annotations
 
-import os
-from typing import Callable
 from typing import List
 from typing import NamedTuple
-from typing import Optional
 from typing import Tuple
 
 import torch
-import PIL
 from torch.utils import data
 from torch.utils.data import DataLoader
 from torch.utils.data import DistributedSampler
@@ -17,22 +13,7 @@ from torchvision.transforms import transforms
 
 from common.consts import IMAGENET_MEAN
 from common.consts import IMAGENET_STD
-
-
-class ImageDataset(data.Dataset):
-    def __init__(self, root: str, transform: Optional[Callable] = None):
-        super().__init__()
-
-        self.root = root
-        self.filenames = list(sorted(os.listdir(root)))
-        self.transform = transform
-
-    def __getitem__(self, index) -> T_co:
-        image = PIL.Image.open(os.path.join(self.root, self.filenames[index])).convert("RGB")
-        return self.transform(image)
-
-    def __len__(self):
-        return len(self.filenames)
+from common.data import ImageDataset
 
 
 class ImagePairDataset(data.Dataset):
