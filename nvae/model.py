@@ -14,6 +14,7 @@ from torchvision.ops import SqueezeExcitation
 
 from common.distributed import print_once
 from nvae.distributions import LogisticMixture
+from nvae.distributions import create_normal
 
 
 def kl_loss(q: Normal, p: Normal) -> torch.Tensor:
@@ -378,11 +379,11 @@ class Decoder(nn.Module):
 
         mean, log_std = torch.chunk(self.encoder_samplers[0](encoder_final_state), dim=1, chunks=2)
         # TODO(pauldb): Revisit clamping etc.
-        q_dist = Normal(loc=mean, scale=torch.exp(log_std))
+        q_dist = create_normal(mean=mean, log_std=log_std)
         latent = q_dist.rsample()
         log_qs = [q_dist.log_prob(latent)]
 
-        p_dist = Normal(loc=torch.zeros_like(mean), scale=torch.ones_like(log_std))
+        p_dist = create_normal(mean=torch.zeros_like(mean), log_std=torch.zeros_like(log_std))
         log_ps = [p_dist.log_prob(latent)]
         kl_divs = [kl_loss(q_dist, p_dist)]
 
@@ -394,15 +395,11 @@ class Decoder(nn.Module):
             x = self.decoder_cells[idx](x)
 
             p_mean, p_log_std = torch.chunk(self.decoder_samplers[idx](x), dim=1, chunks=2)
-            # TODO(pauldb): More clamping.
-            std = torch.exp(p_log_std)
-            mask = std <= 0
-            assert torch.min(std).item() > 0 # , std[mask]
-            p_dist = Normal(loc=p_mean, scale=torch.exp(p_log_std))
+            p_dist = create_normal(mean=p_mean, log_std=p_log_std)
 
             q_state = self.conditional_combiners[idx](encoder_state=encoder_states[idx-1], decoder_state=x)
             q_mean, q_log_std = torch.chunk(self.encoder_samplers[idx](q_state), dim=1, chunks=2)
-            q_dist = Normal(loc=q_mean, scale=torch.exp(q_log_std))
+            q_dist = create_normal(mean=q_mean, log_std=q_log_std)
             latent = q_dist.rsample()
 
             kl_divs.append(kl_loss(q_dist, p_dist))
@@ -417,6 +414,12 @@ class Decoder(nn.Module):
 
 
 class NVAE(nn.Module):
+    RECON_LOSS: str = "reconstruction_loss"
+    KL_LOSS: str = "kl_loss"
+    BN_LOSS: str = "batchnorm_loss"
+    SPECTRAL_LOSS: str = "spectral_loss"
+    LOSS_KEYS: Tuple[str, ...] = (RECON_LOSS, KL_LOSS, BN_LOSS, SPECTRAL_LOSS)
+
     def __init__(
         self,
         num_latent_groups: int = 36,
@@ -478,13 +481,13 @@ class NVAE(nn.Module):
 
         # Parameters needed for the power iteration method to compute the spectral regularization loss.
         self.power_method_steps = power_method_steps
-        self.u = nn.ParameterDict()
-        self.v = nn.ParameterDict()
+        self.u = {}
+        self.v = {}
         grouped_weights = self._group_weights()
         for key, weight in grouped_weights.items():
             batch, rows, cols = key.split("_")
-            self.u[key] = nn.Parameter(torch.randn(int(batch), int(rows), device="cuda"), requires_grad=False)
-            self.v[key] = nn.Parameter(torch.randn(int(batch), int(cols), device="cuda"), requires_grad=False)
+            self.u[key] = torch.randn(int(batch), int(rows), device="cuda", requires_grad=False)
+            self.v[key] = torch.randn(int(batch), int(cols), device="cuda", requires_grad=False)
 
         print_once(f"Executing {self.power_method_steps * 10} power method steps to warm up spectral normalization...")
         start_time = time.time()
@@ -556,19 +559,23 @@ class NVAE(nn.Module):
 
         dist = LogisticMixture(num_mixtures=self.num_output_mixtures, params=x)
 
-        reconstruction_loss = torch.mean(dist.log_p(images))
+        reconstruction_loss = torch.mean(-dist.log_p(images))
         total_kl_loss = torch.mean(torch.stack([torch.mean(kl_div) for kl_div in kl_divs]))
         bn_loss = self.batch_norm_loss()
         spectral_loss = self.spectral_loss()
 
         losses = {
-            "reconstruction_loss": reconstruction_loss,
-            "kl_loss": total_kl_loss,
-            "bn_loss": bn_loss,
-            "spectral_loss": spectral_loss,
+            self.RECON_LOSS: reconstruction_loss,
+            self.KL_LOSS: total_kl_loss,
+            self.BN_LOSS: bn_loss,
+            self.SPECTRAL_LOSS: spectral_loss,
         }
 
         return {
             **losses,
-            "loss": sum(losses.values()),
+            "loss": sum(losses[k] for k in self.LOSS_KEYS),
         }
+
+    def summarize(self, step: int, epoch: int, metrics: Dict[str, torch.Tensor]) -> None:
+        formatted_metrics = "\t".join([f"{k}: {metrics[k].item()}" for k in metrics])
+        print(f"Step {step}:\t{formatted_metrics}")
