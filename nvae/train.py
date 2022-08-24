@@ -22,9 +22,9 @@ def main():
     torch.cuda.set_device(local_rank)
 
     parser = ArgumentParser()
-    parser.add_argument("--batch_size", type=int, default=200, help="Batch size")
+    parser.add_argument("--batch_size", type=int, default=4, help="Batch size")
     parser.add_argument("--lr", type=float, default=0.01, help="Learning rate")
-    parser.add_argument("--num_epochs", type=int, default=300, help="Number of epochs")
+    parser.add_argument("--epochs", type=int, default=300, help="Number of epochs")
     args = parser.parse_args()
 
     train_data_loader = create_data_loader(root=CELEBA_TRAIN_DIR, batch_size=args.batch_size, is_train=True)
@@ -33,9 +33,11 @@ def main():
     eval_data_loader = create_data_loader(root=CELEBA_VAL_DIR, batch_size=args.batch_size, is_train=False)
     print_once(f"Eval dataset has {len(eval_data_loader.dataset)} examples")
 
-    model = NVAE()
+    model = NVAE(num_latent_groups=26, encoder_resolution_group_offsets=frozenset([8, 14, 18, 22]), num_encoder_channels=10)
+    print_once("Model created on rank 0")
     model.cuda()
-    model = DistributedDataParallel(model)
+    model = DistributedDataParallel(model, find_unused_parameters=True)
+    print_once("Distributed model created on rank 0")
 
     steps_per_epoch = len(train_data_loader.dataset) // (args.batch_size * world_size())
 
@@ -51,6 +53,8 @@ def main():
         epochs=args.epochs,
         evaluate_every_n_steps=steps_per_epoch,
     )
+
+    print_once("Starting to train")
 
     solver.execute()
 
