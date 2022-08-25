@@ -3,9 +3,11 @@ import time
 from typing import Dict
 from typing import FrozenSet
 from typing import List
+from typing import NamedTuple
 from typing import Tuple
 from typing import Type
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 from torch import nn
@@ -239,6 +241,9 @@ class Decoder(nn.Module):
     ):
         super().__init__()
 
+        self.latent_dim = latent_dim
+        self.in_resolution = in_resolution
+
         self.decoder_cells, self.resolution_cells = self._create_decoder(
             in_channels=in_channels,
             num_latent_groups=num_latent_groups,
@@ -412,6 +417,41 @@ class Decoder(nn.Module):
 
         return x, kl_divs, log_qs, log_ps
 
+    def sample(self, batch_size: int) -> torch.Tensor:
+        dist = create_normal(
+            mean=torch.zeros(batch_size, self.latent_dim, self.in_resolution, self.in_resolution, device="cuda"),
+            log_std=torch.zeros(batch_size, self.latent_dim, self.in_resolution, self.in_resolution, device="cuda"),
+        )
+        latent = dist.sample()
+        x = self.decoder_cells[0](self.decoder_state.expand(batch_size, -1, -1, -1))
+        x = self.latent_combiners[0](decoder_state=x, latent=latent)
+
+        for idx in range(1, len(self.decoder_cells)):
+            x = self.decoder_cells[idx](x)
+
+            mean, log_std = torch.chunk(self.decoder_samplers[idx](x), dim=1, chunks=2)
+            dist = create_normal(mean=mean, log_std=log_std)
+            latent = dist.sample()
+
+            x = self.latent_combiners[idx](decoder_state=x, latent=latent)
+            x = self.resolution_cells[idx](x)
+
+        return x
+
+
+class LossConfig(NamedTuple):
+    kl_const_steps: int
+    kl_anneal_steps: int
+    kl_min_coeff: float
+    reg_weight_source: float
+    reg_weight_target: float
+
+    def kl_coeff(self, steps: int) -> float:
+        return max(min((steps - self.kl_const_steps) / self.kl_anneal_steps, 1.0), self.kl_min_coeff)
+
+    def reg_weight(self, kl_coeff: float) -> float:
+        return np.exp((1 - kl_coeff) * np.log(self.reg_weight_source) + kl_coeff * np.log(self.reg_weight_target))
+
 
 class NVAE(nn.Module):
     RECON_LOSS: str = "reconstruction_loss"
@@ -422,6 +462,7 @@ class NVAE(nn.Module):
 
     def __init__(
         self,
+        loss_config: LossConfig,
         num_latent_groups: int = 36,
         latent_dim: int = 20,
         num_encoder_channels: int = 30,
@@ -435,6 +476,9 @@ class NVAE(nn.Module):
         power_method_steps: int = 4,
     ):
         super().__init__()
+
+        self.loss_config = loss_config
+        self.register_buffer("steps", torch.tensor(0))
 
         self.preprocessor = Preprocessor(
             in_channels=num_encoder_channels,
@@ -571,10 +615,20 @@ class NVAE(nn.Module):
             self.SPECTRAL_LOSS: spectral_loss,
         }
 
+        # print(f"Memory usage after forward {torch.cuda.memory_allocated() / 10 ** 9}")
+
+        self.steps += 1
+
         return {
             **losses,
             "loss": sum(losses[k] for k in self.LOSS_KEYS),
         }
+
+    def sample(self, batch_size: int, temperature: float) -> torch.Tensor:
+        x = self.decoder.sample(batch_size=batch_size)
+        x = self.postprocessor(x)
+        x = self.image_conditional(x)
+        return LogisticMixture(num_mixtures=self.num_output_mixtures, params=x).sample(temperature=temperature)
 
     def summarize(self, step: int, epoch: int, metrics: Dict[str, torch.Tensor]) -> None:
         formatted_metrics = "\t".join([f"{k}: {metrics[k].item()}" for k in metrics])

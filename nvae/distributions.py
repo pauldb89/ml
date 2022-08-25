@@ -104,4 +104,44 @@ class LogisticMixture:
 
         return torch.logsumexp(log_probs, dim=1)
 
+    def sample(self, temperature: float = 1.0, eps = 0.05) -> torch.Tensor:
+        """
+        We must first sample a logistic distribution from the mixture and then sample pixels from the distribution.
 
+        Sampling from a discrete distribution is typically done by taking max(i | pi_1 + ... + pi_i < u ~ U(0, 1))
+        where (pi_1 + ... + pi_M) is the discrete distribution and u is randomly sampled from U(0, 1). This is
+        equivalent to taking argmax(G_i + log(pi_i)) with G_i ~ Gumbel(0, 1) and we take this approach instead.
+        For more information see: https://towardsdatascience.com/what-is-gumbel-softmax-7f6d9cdcb90e.
+
+        The CDF of Gumbel is F(x) = exp(-exp(-x)) (https://en.wikipedia.org/wiki/Gumbel_distribution). Sampling means
+        drawing values inv(F(u)) where u ~ U(0, 1). inv(F(u)) = -log -log(u).
+
+        The CDF of a logistic distribution is F(x; mu, sigma) = 1 / (1 + exp(-(x - mu) / sigma)). Sampling means drawing
+        values inv(F(u)) where u ~ U(0, 1). inv(F(u)) = mu + sigma * log (x / (1 - x)).
+        """
+        gumbel = -torch.log(-torch.log(torch.empty_like(self.mixture_logits, device="cuda").uniform_(eps, 1.0-eps)))
+        mixtures = torch.argmax(
+            gumbel + torch.log_softmax(self.mixture_logits / temperature, dim=1),
+            dim=1,
+            keepdim=True,
+        )
+
+        mixtures = mixtures.unsqueeze(dim=2).expand(-1, -1, 3, -1, -1)
+
+        means = torch.gather(self.means, dim=1, index=mixtures).squeeze(dim=1)
+        log_stds = torch.gather(self.log_stds, dim=1, index=mixtures).squeeze(dim=1)
+        coeffs = torch.gather(self.coeffs, dim=1, index=mixtures).squeeze(dim=1)
+
+        u = torch.empty_like(means).uniform_(eps, 1.0-eps)
+        logits = torch.log(u / (1 - u))
+
+        image = means + torch.exp(log_stds) * logits
+
+        next_coeff_idx = 0
+        for color_idx in range(3):
+            for prev_color_idx in range(color_idx):
+                image[:, color_idx, :, :] += coeffs[:, next_coeff_idx, :, :] * image[:, prev_color_idx, :, :]
+                next_coeff_idx += 1
+
+        image = torch.clamp(image, -1, 1)
+        return image / 2 + 0.5
