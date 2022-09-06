@@ -10,7 +10,7 @@ def softclamp5(x: torch.Tensor) -> torch.Tensor:
 
 
 def create_normal(mean: torch.Tensor, log_std: torch.Tensor) -> Normal:
-    return Normal(loc=softclamp5(mean), scale=torch.exp(softclamp5(log_std)))
+    return Normal(loc=softclamp5(mean), scale=torch.exp(softclamp5(log_std)) + 1e-2)
 
 
 class LogisticMixture:
@@ -22,33 +22,27 @@ class LogisticMixture:
 
         self.mixture_logits = params[:, :num_mixtures, :, :]
 
-        self.means = params[:, num_mixtures:4*num_mixtures, :, :].view(batch_size, num_mixtures, 3, height, width)
-        # self.log_stds = torch.clamp(
-        #     params[:, 4*num_mixtures:7*num_mixtures, :, :].view(batch_size, num_mixtures, 3, height, width),
-        #     min=-7.0,
-        # )
-        self.log_stds = softclamp5(
-            params[:, 4*num_mixtures:7*num_mixtures, :, :].view(batch_size, num_mixtures, 3, height, width)
-        )
-
-        self.coeffs = torch.tanh(params[:, 7*num_mixtures:, :, :].view(batch_size, num_mixtures, 3, height, width))
+        rem_params = params[:, num_mixtures:, :, :].view(batch_size, 3, 3 * num_mixtures, height, width)
+        self.means = rem_params[:, :, :num_mixtures, :, :]
+        self.log_stds = torch.clamp(rem_params[:, :, num_mixtures:2*num_mixtures, :, :], min=-7.0)
+        self.coeffs = torch.tanh(rem_params[:, :, 2*num_mixtures:, :, :])
 
     def log_p(self, x: torch.Tensor) -> torch.Tensor:
         # Rescale input to [-1, 1].
         x = (2 * x) - 1
 
-        x = torch.unsqueeze(x, dim=1).expand(-1, self.num_mixtures, -1, -1, -1)
+        x = torch.unsqueeze(x, dim=2).expand(-1, -1, self.num_mixtures, -1, -1)
 
         means = []
         next_coeff_idx = 0
         for color_idx in range(3):
-            mean_terms = [self.means[:, :, color_idx, :, :]]
+            mean_terms = [self.means[:, color_idx, :, :, :]]
             for prev_color_idx in range(color_idx):
-                mean_terms.append(x[:, :, prev_color_idx, :, :] * self.coeffs[:, :, next_coeff_idx, :, :])
+                mean_terms.append(x[:, prev_color_idx, :, :, :] * self.coeffs[:, next_coeff_idx, :, :, :])
                 next_coeff_idx += 1
             means.append(sum(mean_terms))
 
-        means = torch.stack(means, dim=2)
+        means = torch.stack(means, dim=1)
 
         stds = torch.exp(self.log_stds)
         x_max = (x + 1 / 255. - means) / stds
@@ -100,11 +94,11 @@ class LogisticMixture:
             torch.where(x > 0.99, log_one_cdf_min, log_prob_mid_safe)
         )
 
-        log_probs = torch.log_softmax(self.mixture_logits, dim=1) + torch.sum(log_per_mixture_probs, dim=2)
+        log_probs = torch.log_softmax(self.mixture_logits, dim=1) + torch.sum(log_per_mixture_probs, dim=1)
 
         return torch.logsumexp(log_probs, dim=1)
 
-    def sample(self, temperature: float = 1.0, eps = 0.05) -> torch.Tensor:
+    def sample(self, temperature: float = 1.0, eps: float = 1e-5) -> torch.Tensor:
         """
         We must first sample a logistic distribution from the mixture and then sample pixels from the distribution.
 
@@ -126,11 +120,11 @@ class LogisticMixture:
             keepdim=True,
         )
 
-        mixtures = mixtures.unsqueeze(dim=2).expand(-1, -1, 3, -1, -1)
+        mixtures = mixtures.unsqueeze(dim=1).expand(-1, 3, -1, -1, -1)
 
-        means = torch.gather(self.means, dim=1, index=mixtures).squeeze(dim=1)
-        log_stds = torch.gather(self.log_stds, dim=1, index=mixtures).squeeze(dim=1)
-        coeffs = torch.gather(self.coeffs, dim=1, index=mixtures).squeeze(dim=1)
+        means = torch.gather(self.means, dim=2, index=mixtures).squeeze(dim=2)
+        log_stds = torch.gather(self.log_stds, dim=2, index=mixtures).squeeze(dim=2)
+        coeffs = torch.gather(self.coeffs, dim=2, index=mixtures).squeeze(dim=2)
 
         u = torch.empty_like(means).uniform_(eps, 1.0-eps)
         logits = torch.log(u / (1 - u))

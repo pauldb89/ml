@@ -10,11 +10,11 @@ from torch.utils.data.dataset import T_co
 
 
 class ImageDataset(data.Dataset):
-    def __init__(self, root: str, transform: Optional[Callable] = None):
+    def __init__(self, root: str, transform: Optional[Callable] = None, max_files: Optional[int] = None):
         super().__init__()
 
         self.root = root
-        self.filenames = list(sorted(os.listdir(root)))
+        self.filenames = list(sorted(os.listdir(root)))[:max_files]
         self.transform = transform
 
     def __getitem__(self, index) -> T_co:

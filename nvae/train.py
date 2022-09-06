@@ -3,18 +3,20 @@ import os
 from argparse import ArgumentParser
 
 import torch.cuda
+from torch import nn
 from torch.nn.parallel import DistributedDataParallel
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.optim.lr_scheduler import LinearLR
 from torch.optim.lr_scheduler import SequentialLR
 
+from common.distributed import is_root_process
 from common.distributed import print_once
 from common.distributed import world_size
 from common.samplers import set_seeds
 from common.solver import Solver
-from nvae.consts import CELEBA_TRAIN_DIR
-from nvae.consts import CELEBA_VAL_DIR
-from nvae.data import create_data_loader
+from nvae.consts import DATASETS_DIR
+from nvae.data import create_eval_data_loader
+from nvae.data import create_train_data_loader
 from nvae.evaluate import evaluate
 from nvae.model import LossConfig
 from nvae.model import NVAE
@@ -29,10 +31,22 @@ def main():
 
     parser = ArgumentParser()
     parser.add_argument("--batch_size", type=int, default=4, help="Batch size")
+    parser.add_argument(
+        "--num_encoder_channels",
+        type=int,
+        default=60,
+        help="Number of channels for initial processing")
+    parser.add_argument("--num_latent_groups", type=int, default=35, help="Number of latent groups")
+    parser.add_argument(
+        "--resolution_group_offsets",
+        type=str,
+        default="19,29",
+        help="Groups after which resolution is decreased while encoding"
+    )
     parser.add_argument("--lr", type=float, default=0.01, help="Learning rate")
     parser.add_argument("--weight_decay", type=float, default=3e-4, help="Weight decay")
     parser.add_argument("--eta_min", type=float, default=1e-4, help="Cosine schedule minimum learning rate")
-    parser.add_argument("--epochs", type=int, default=300, help="Number of epochs")
+    parser.add_argument("--epochs", type=int, default=90, help="Number of epochs")
     parser.add_argument("--warmup_epochs", type=int, default=5, help="Number of warmup epochs")
     # Parameters defining the schedule for the KL divergence weight. For the first kl_const_portion steps (out of
     # the total training steps) the weight of the KL loss is kept constant at kl_min_coeff. It is then increased
@@ -51,20 +65,16 @@ def main():
         help="Training schedule portion where the KL coeff is gradually increased to 1"
     )
     parser.add_argument("--kl_min_coeff", type=float, default=1e-4, help="Initial KL coefficient value")
-    # The regularization weight parameter controls the strength for the spectral norm and batch norm losses.
-    # The actual value of the parameter is defined as reg_weight_source ^ (1 - kl_coeff) * reg_weight_target ^ kl_coeff.
-    # The strength of the regularization losses is decreased as the training schedule progresses.
-    parser.add_argument("--reg_weight_source", type=float, default=1.0, help="Source weight for regularization losses")
-    parser.add_argument("--reg_weight_target", type=float, default=0.01, help="Target weight for regularization losses")
+    parser.add_argument("--reg_weight", type=float, default=0.1, help="Target weight for regularization losses")
     parser.add_argument("--output_dir", type=str, required=True, help="Output directory")
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
 
-    train_data_loader = create_data_loader(root=CELEBA_TRAIN_DIR, batch_size=args.batch_size, is_train=True)
+    train_data_loader = create_train_data_loader(root=DATASETS_DIR, batch_size=args.batch_size)
     print_once(f"Training dataset has {len(train_data_loader.dataset)} examples")
 
-    eval_data_loader = create_data_loader(root=CELEBA_VAL_DIR, batch_size=args.batch_size, is_train=False)
+    eval_data_loader = create_eval_data_loader(root=DATASETS_DIR, batch_size=args.batch_size)
     print_once(f"Eval dataset has {len(eval_data_loader.dataset)} examples")
 
     steps_per_epoch = len(train_data_loader.dataset) // (args.batch_size * world_size())
@@ -75,16 +85,21 @@ def main():
             kl_const_steps=args.kl_const_portion * total_steps,
             kl_anneal_steps=args.kl_anneal_portion * total_steps,
             kl_min_coeff=args.kl_min_coeff,
-            reg_weight_source=args.reg_weight_source,
-            reg_weight_target=args.reg_weight_target,
+            reg_weight=args.reg_weight,
         ),
+        num_encoder_channels=args.num_encoder_channels,
+        num_latent_groups=args.num_latent_groups,
+        encoder_resolution_group_offsets=frozenset(map(int, args.resolution_group_offsets.split(",")))
     )
+
     print_once("Model created on rank 0")
     model.cuda()
+    model = nn.SyncBatchNorm.convert_sync_batchnorm(model)
+
     model = DistributedDataParallel(model, find_unused_parameters=True)
     print_once("Distributed model created on rank 0")
 
-    optimizer = torch.optim.Adamax(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    optimizer = torch.optim.Adamax(model.parameters(), lr=args.lr, weight_decay=args.weight_decay, eps=1e-3)
     warmup_scheduler = LinearLR(
         optimizer,
         start_factor=1 / (args.warmup_epochs * steps_per_epoch),
@@ -110,8 +125,10 @@ def main():
         epochs=args.epochs,
         evaluate_every_n_steps=steps_per_epoch,
         summarize_fn=model.module.summarize,
-        summarize_every_n_steps=1,
-        log_every_n_steps=50,
+        summarize_every_n_steps=100,
+        log_every_n_steps=100,
+        snapshot_dir=args.output_dir,
+        snapshot_every_n_steps=steps_per_epoch,
     )
 
     print_once("Starting to train")
