@@ -10,7 +10,8 @@ from common.distributed import print_once
 
 
 def evaluate(
-    step: str,
+    step: int,
+    eval_swag: bool,
     model: nn.Module,
     data_loader: DataLoader,
     log_progress_every_n_steps: Optional[int] = 30,
@@ -44,6 +45,7 @@ def evaluate(
     torch.distributed.all_reduce(total)
     torch.distributed.all_reduce(loss)
 
-    print_once(f"Step {step}: Top-1 accuracy {100 * (top_1_matches / total).item():.1f}%")
-    print_once(f"Step {step}: Top-5 accuracy {100 * (top_5_matches / total).item():.1f}%")
-    print_once(f"Step {step}: Eval Loss {(loss / total).item():.5f}")
+    formatted_step = step if not eval_swag else f"{step} SWAG"
+    print_once(f"Step {formatted_step}: Top-1 accuracy {100 * (top_1_matches / total).item():.1f}%")
+    print_once(f"Step {formatted_step}: Top-5 accuracy {100 * (top_5_matches / total).item():.1f}%")
+    print_once(f"Step {formatted_step}: Eval Loss {(loss / total).item():.5f}")

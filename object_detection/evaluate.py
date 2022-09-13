@@ -20,7 +20,7 @@ def rescale_bbox(bbox: List[float], x_scale: float, y_scale: float) -> List[floa
     return [bbox[0] * x_scale, bbox[1] * y_scale, bbox[2] * x_scale, bbox[3] * y_scale]
 
 
-def evaluate(step: str, model: Detector, data_loader: DataLoader) -> None:
+def evaluate(step: int, model: Detector, data_loader: DataLoader) -> None:
     print_once(f"Running inference on eval dataset at step {step}")
     start_time = time.time()
     category_mapping = data_loader.dataset.categories

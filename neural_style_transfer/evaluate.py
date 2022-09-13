@@ -13,7 +13,7 @@ from common.distributed import print_once
 from common.distributed import world_size
 
 
-def evaluate(step: str, model: nn.Module, data_loader: DataLoader, log_progress_every_n_steps: Optional[int] = 10):
+def evaluate(step: int, model: nn.Module, data_loader: DataLoader, log_progress_every_n_steps: Optional[int] = 10):
     start_time = time.time()
     print_once(f"Running inference on eval dataset at step {step}")
 

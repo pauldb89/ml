@@ -82,7 +82,7 @@ class Throughput:
 
 
 class EvalFunction(Protocol):
-    def __call__(self, step: str, model: nn.Module) -> None:
+    def __call__(self, step: int, model: nn.Module) -> None:
         ...
 
 
@@ -94,9 +94,11 @@ class Solver:
         lr_scheduler: _LRScheduler,
         train_data_loader: DataLoader,
         eval_fn: EvalFunction,
+        eval_avg_model_fn: Optional[EvalFunction] = None,
         max_steps: Optional[int] = None,
         epochs: int = 1,
         evaluate_every_n_steps: Optional[int] = None,
+        evaluate_avg_model_every_n_steps: Optional[int] = None,
         evaluate_at_start: bool = False,
         evaluate_at_end: bool = True,
         log_every_n_steps: Optional[int] = 10,
@@ -108,14 +110,20 @@ class Solver:
         snapshot_dir: Optional[str] = None,
         snapshot_every_n_steps: Optional[int] = None,
     ):
+        assert eval_avg_model_fn is None or avg_model is not None, (
+            "eval_avg_model_fn can be defined only when avg_model is defined"
+        )
+
         self.model = model
         self.optimizer = optimizer
         self.lr_scheduler = lr_scheduler
         self.train_data_loader = train_data_loader
         self.eval_fn = eval_fn
+        self.eval_avg_model_fn = eval_avg_model_fn
         self.max_steps = max_steps
         self.epochs = epochs
         self.evaluate_every_n_steps = evaluate_every_n_steps
+        self.evaluate_avg_model_every_n_steps = evaluate_avg_model_every_n_steps
         self.evaluate_at_start = evaluate_at_start
         self.evaluate_at_end = evaluate_at_end
         self.log_every_n_steps = log_every_n_steps
@@ -193,9 +201,11 @@ class Solver:
                     throughput.start((step+1) * len(batch) * world_size())
 
                 if self.evaluate_every_n_steps is not None and step > 0 and step % self.evaluate_every_n_steps == 0:
-                    self.eval_fn(model=self.model.module, step=f"{step}")
-                    if self.avg_model is not None:
-                        self.eval_fn(model=self.avg_model, step=f"{step} SWAG")
+                    self.eval_fn(model=self.model.module, step=step)
+                if (self.avg_model is not None and
+                        self.evaluate_avg_model_every_n_steps is not None and
+                        step > 0 and step % self.evaluate_avg_model_every_n_steps == 0):
+                    self.eval_avg_model_fn(model=self.avg_model, step=step)
 
                 if (is_root_process()
                         and self.snapshot_dir is not None and self.snapshot_every_n_steps is not None
@@ -209,9 +219,9 @@ class Solver:
                 step += 1
 
         if self.evaluate_at_end:
-            self.eval_fn(model=self.model.module, step=f"{self.max_steps}")
+            self.eval_fn(model=self.model.module, step=step)
             if self.avg_model is not None:
-                self.eval_fn(model=self.avg_model, step=f"{self.max_steps} SWAG")
+                self.eval_avg_model_fn(model=self.avg_model, step=step)
 
         if (is_root_process()
                 and self.snapshot_dir is not None and self.snapshot_every_n_steps is not None):

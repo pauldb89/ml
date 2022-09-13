@@ -85,7 +85,6 @@ def main():
     else:
         raise ValueError(f"Invalid option {args.model}")
 
-
     train_data_loader = get_train_data_loader(
         dataset_name=dataset_config.name,
         batch_size=args.batch_size,
@@ -149,6 +148,8 @@ def main():
         milestones=[args.warmup_epochs * num_steps_per_epoch],
     )
 
+    eval_fn = functools.partial(evaluate, data_loader=eval_data_loader)
+
     solver = Solver(
         model=model,
         optimizer=optimizer,
@@ -156,13 +157,15 @@ def main():
         train_data_loader=train_data_loader,
         max_steps=args.max_steps,
         epochs=args.epochs,
-        eval_fn=functools.partial(evaluate, data_loader=eval_data_loader),
+        eval_fn=functools.partial(eval_fn, eval_swag=False),
         evaluate_every_n_steps=num_steps_per_epoch,
+        evaluate_avg_model_every_n_steps=num_steps_per_epoch,
         evaluate_at_start=False,
         log_every_n_steps=100,
         max_grad_norm=args.max_grad_norm,
         avg_model=avg_model,
         avg_model_steps=args.model_avg_steps,
+        eval_avg_model_fn=functools.partial(eval_fn, eval_swag=True),
     )
 
     solver.execute()
