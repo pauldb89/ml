@@ -7,16 +7,17 @@ import torch.distributed
 from torch.nn.parallel import DistributedDataParallel
 from torch.optim.lr_scheduler import LambdaLR
 
-from common.consts import WANDB_DIR
+from common.consts.coco_consts import EVAL_ANNOTATION_FILE
+from common.consts.coco_consts import EVAL_ROOT_DIR
+from common.consts.coco_consts import TRAIN_ANNOTATION_FILE
+from common.consts.coco_consts import TRAIN_ROOT_DIR
 from common.distributed import print_once
 from common.solver import Solver
+from common.wandb import WANDB_DIR
 from common.wandb import wandb_config_update
 from common.wandb import wandb_init
-from object_detection.coco_consts import EVAL_ANNOTATION_FILE
-from object_detection.coco_consts import EVAL_ROOT_DIR
-from object_detection.coco_consts import TRAIN_ANNOTATION_FILE
-from object_detection.coco_consts import TRAIN_ROOT_DIR
-from object_detection.data import create_train_data_loader, create_eval_data_loader
+from object_detection.data import create_eval_data_loader
+from object_detection.data import create_train_data_loader
 from object_detection.detector import Detector
 from object_detection.evaluate import evaluate
 

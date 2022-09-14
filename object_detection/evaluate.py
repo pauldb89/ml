@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader
 from common.distributed import is_root_process
 from common.distributed import print_once
 from common.distributed import world_size
-from object_detection.coco_consts import EVAL_ANNOTATION_FILE
+from common.consts.coco_consts import EVAL_ANNOTATION_FILE
 from object_detection.data import Batch
 from object_detection.detector import Detector
 

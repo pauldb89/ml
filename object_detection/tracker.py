@@ -18,9 +18,9 @@ from detectron2.data import MetadataCatalog
 from detectron2.engine.defaults import DefaultPredictor
 
 from common.distributed import world_size
-from object_detection.coco_consts import EVAL_ANNOTATION_FILE
-from object_detection.coco_consts import EVAL_ROOT_DIR
-from object_detection.coco_consts import FALLBACK_IMAGE_ID
+from common.consts.coco_consts import EVAL_ANNOTATION_FILE
+from common.consts.coco_consts import EVAL_ROOT_DIR
+from common.consts.coco_consts import FALLBACK_IMAGE_ID
 
 
 def main():

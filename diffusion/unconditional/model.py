@@ -1,133 +1,17 @@
-import enum
-import math
 from typing import Dict
 from typing import FrozenSet
-from typing import Optional
 from typing import Tuple
 
 import torch
 import torch.nn.functional as F
 from torch import nn
 
+from diffusion.common.modules import SelfAttentionBlock
+from diffusion.common.modules import ConvBlock
+from diffusion.common.modules import ResolutionMode
 
-class NoiseSchedule(nn.Module):
-	def get_alphas(self, diffusion_steps: torch.Tensor) -> torch.Tensor:
-		return self.alphas[diffusion_steps].view(-1, 1, 1, 1)
-
-	def get_alpha_bars(self, diffusion_steps: torch.Tensor) -> torch.Tensor:
-		return self.alpha_bars[diffusion_steps].view(-1, 1, 1, 1)
-
-	def get_alpha_bars_prev(self, diffusion_steps: torch.Tensor) -> torch.Tensor:
-		return self.alpha_bars_prev[diffusion_steps].view(-1, 1, 1, 1)
-
-
-class LinearNoiseSchedule(NoiseSchedule):
-	"""
-	Linear diffusion noise schedule used in https://arxiv.org/pdf/2006.11239v2.pdf.
-	"""
-	def __init__(self, beta_start: float, beta_end: float, num_diffusion_steps: int):
-		super().__init__()
-
-		self.beta_start = beta_start * (1000 / num_diffusion_steps)
-		self.beta_end = beta_end * (1000 / num_diffusion_steps)
-		self.num_diffusion_steps = num_diffusion_steps
-
-		alpha_bar = 1
-		alpha_bars = []
-		alphas = []
-		for step in range(num_diffusion_steps):
-			beta = beta_start + step / (num_diffusion_steps - 1) * (beta_end - beta_start)
-			alpha = 1 - beta
-			alphas.append(alpha)
-			alpha_bar *= alpha
-			alpha_bars.append(alpha_bar)
-
-		self.register_buffer("alphas", torch.tensor(alphas))
-		self.register_buffer("alpha_bars", torch.tensor(alpha_bars))
-		self.register_buffer("alpha_bars_prev", torch.tensor([1.0] + alpha_bars[:-1]))
-
-	def __repr__(self) -> str:
-		return (
-			f"LinearNoiseSchedule("
-			f"beta_start={self.beta_start}, "
-			f"beta_end={self.beta_end}, "
-			f"num_diffusion_steps={self.num_diffusion_steps}"
-			f")"
-		)
-
-
-class CosineSquaredNoiseSchedule(NoiseSchedule):
-	"""
-	Improved diffusion noise schedule proposed in https://arxiv.org/abs/2102.09672.
-	"""
-	def __init__(self, num_diffusion_steps: int, smooth_factor: float = 0.008):
-		super().__init__()
-
-		self.smooth_factor = smooth_factor
-		self.num_diffusion_steps = num_diffusion_steps
-
-		def f(t: int) -> float:
-			return math.cos((t / num_diffusion_steps + smooth_factor) / (1 + smooth_factor) * 2 * math.pi) ** 2
-
-		alpha_bars = []
-		for step in range(num_diffusion_steps):
-			alpha_bar = f(step + 1) / f(0)
-			alpha_bars.append(alpha_bar)
-
-		self.register_buffer("alpha_bars", torch.tensor(alpha_bars))
-		self.register_buffer("alpha_bars_prev", torch.tensor([1.0] + alpha_bars[:-1]))
-		self.register_buffer("alphas", self.alpha_bars / self.alpha_bars_prev)
-
-	def __repr__(self) -> str:
-		return (
-			f"CosineSquaredNoiseSchedule("
-			f"num_diffusion_steps={self.num_diffusion_steps}, "
-			f"smooth_factor={self.smooth_factor}"
-			f")"
-		)
-
-
-class TimeEmbedder(nn.Module):
-	"""
-	Generate sine / cosine positional (time) embeddings based on https://arxiv.org/pdf/1706.03762.pdf.
-	"""
-	def __init__(self, embed_dim: int, scale: float = 10_000):
-		super().__init__()
-
-		assert embed_dim % 2 == 0
-
-		self.scale = scale
-		self.embed_dim = embed_dim
-
-	def forward(self, diffusion_steps: torch.Tensor) -> torch.Tensor:
-
-		num_frequencies = self.embed_dim // 2
-		exp_scale = math.log(self.scale) / (num_frequencies - 1)
-		# Pick sine / cosine frequencies with exponential decay between [1, 1 / self.scale].
-		frequencies = torch.exp(torch.arange(num_frequencies, device="cuda") * -exp_scale)
-		raw_embedding = torch.outer(diffusion_steps, frequencies)
-		return torch.cat([torch.sin(raw_embedding), torch.cos(raw_embedding)], dim=1)
-
-	def __repr__(self) -> str:
-		return f"TimeEmbedder(scale={self.scale}, embed_dim={self.embed_dim})"
-
-
-class ConvBlock(nn.Module):
-	def __init__(self, in_channels: int, out_channels: int, groups: int):
-		super().__init__()
-
-		self.conv = nn.Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=3, padding=1)
-		self.norm = nn.GroupNorm(num_groups=groups, num_channels=out_channels)
-
-	def forward(self, x: torch.Tensor, time_scale_shift: Optional[torch.Tensor] = None) -> torch.Tensor:
-		x = self.norm(self.conv(x))
-
-		if time_scale_shift is not None:
-			batch_size, channels = time_scale_shift.size()
-			scale, shift = torch.chunk(time_scale_shift.view(batch_size, channels, 1, 1), chunks=2, dim=1)
-			x = x * (scale + 1) + shift
-
-		return F.silu(x)
+from diffusion.common.modules import TimeEmbedder
+from diffusion.common.noise_schedule import NoiseSchedule
 
 
 class ResnetBlock(nn.Module):
@@ -153,31 +37,10 @@ class ResnetBlock(nn.Module):
 	def forward(self, input_tensor: torch.Tensor, time_embedding: torch.Tensor) -> torch.Tensor:
 		time_scale_shift = self.time_mlp(F.silu(time_embedding))
 
-		x = self.block1(input_tensor, time_scale_shift=time_scale_shift)
-		x = self.block2(x, time_scale_shift=None)
+		x = self.block1(input_tensor, scale_shift=time_scale_shift)
+		x = self.block2(x, scale_shift=None)
 
 		return self.residual(input_tensor) + x
-
-
-class AttentionBlock(nn.Module):
-	def __init__(self, embedding_dim: int, num_heads: int = 4):
-		super().__init__()
-		self.pre_norm = nn.LayerNorm(embedding_dim)
-		self.block = nn.MultiheadAttention(num_heads=num_heads, embed_dim=embedding_dim, batch_first=True)
-
-	def forward(self, input_tensor: torch.Tensor) -> torch.Tensor:
-		batch_size, num_channels, height, width = input_tensor.size()
-		x = input_tensor.view(batch_size, num_channels, -1).permute(0, 2, 1)
-		x = self.pre_norm(x)
-		x, _ = self.block(query=x, key=x, value=x)
-		x = x.permute(0, 2, 1).view(batch_size, num_channels, height, width)
-		return input_tensor + x
-
-
-class ResolutionMode(enum.IntEnum):
-	NONE = 1
-	UPSAMPLE = 2
-	DOWNSAMPLE = 3
 
 
 class DenoisingBlock(nn.Module):
@@ -201,7 +64,7 @@ class DenoisingBlock(nn.Module):
 			for _ in range(num_blocks_per_scale)
 		)
 
-		self.attention_block = AttentionBlock(embedding_dim=in_channels) if use_attention else nn.Identity()
+		self.attention_block = SelfAttentionBlock(embed_dim=in_channels) if use_attention else nn.Identity()
 
 		if resolution_scale_mode == ResolutionMode.NONE:
 			self.resolution_block = nn.Conv2d(
@@ -351,6 +214,9 @@ class DiffusionModel(nn.Module):
 
 		The formula for the forward process is x_t = sqrt(alpha_bar_t) * x_0 + sqrt(1 - alpha_bar_t) epsilon.
 		Equation (4) from https://arxiv.org/pdf/2006.11239v2.pdf.
+
+		Note that the equation is expressed in terms of variance, so we need to use the square root for noise
+		multiplier. Full derivation at https://lilianweng.github.io/posts/2021-07-11-diffusion-models/.
 		"""
 		assert images.size() == noise.size()
 

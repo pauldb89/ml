@@ -16,22 +16,25 @@ from torch.optim.lr_scheduler import SequentialLR
 from torchvision.transforms import transforms
 from torchvision.utils import make_grid
 
-from common.consts import WANDB_DIR
 from common.distributed import is_root_process
 from common.distributed import print_once
 from common.fid_evaluator import FIDEvaluator
 from common.samplers import set_seeds
 from common.solver import Solver
+from common.wandb import WANDB_DIR
 from common.wandb import wandb_config_update
 from common.wandb import wandb_init
 from common.wandb import wandb_log
-from diffusion.data import create_eval_data_loader
-from diffusion.data import create_train_data_loader
-from diffusion.evaluate import evaluate
-from diffusion.model import AverageModelWrapper
-from diffusion.model import CosineSquaredNoiseSchedule
-from diffusion.model import DiffusionModel
-from diffusion.model import LinearNoiseSchedule
+from diffusion.unconditional.consts import DATA_DIR
+from diffusion.unconditional.consts import EVAL_SPLIT
+from diffusion.unconditional.consts import TRAIN_SPLIT
+from diffusion.unconditional.data import create_eval_data_loader
+from diffusion.unconditional.data import create_train_data_loader
+from diffusion.unconditional.evaluate import evaluate
+from diffusion.unconditional.model import AverageModelWrapper
+from diffusion.common.noise_schedule import CosineSquaredNoiseSchedule
+from diffusion.unconditional.model import DiffusionModel
+from diffusion.common.noise_schedule import LinearNoiseSchedule
 
 
 def summarize(step: int, epoch: int, raw_metrics: Dict[str, Any], models: Dict[str, nn.Module]) -> None:
@@ -64,6 +67,18 @@ def main():
 	wandb_init(project="diffusion", dir=WANDB_DIR)
 
 	parser = ArgumentParser()
+	parser.add_argument(
+		"--train_data_dir",
+		type=str,
+		default=os.path.join(DATA_DIR, TRAIN_SPLIT),
+		help="Training data directory",
+	)
+	parser.add_argument(
+		"--eval_data_dir",
+		type=str,
+		default=os.path.join(DATA_DIR, EVAL_SPLIT),
+		help="Eval data directory",
+	)
 	parser.add_argument("--resolution", type=int, default=128, help="Image resolution")
 	parser.add_argument("--batch_size", type=int, default=16, help="Batch size")
 	parser.add_argument("--max_steps", type=int, default=1_000_000, help="Number of training iterations")
@@ -100,12 +115,14 @@ def main():
 	os.makedirs(args.output_dir, exist_ok=True)
 
 	train_data_loader = create_train_data_loader(
+		data_dir=args.train_data_dir,
 		batch_size=args.batch_size,
 		max_steps=args.max_steps,
 		resolution=args.resolution,
 	)
 	print_once(f"Training dataset has {len(train_data_loader.dataset)} examples")
 	eval_data_loader = create_eval_data_loader(
+		data_dir=args.eval_data_dir,
 		batch_size=args.batch_size,
 		resolution=args.resolution,
 	)

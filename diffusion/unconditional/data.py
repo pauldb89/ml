@@ -1,19 +1,20 @@
-import os
-
 from torch.utils.data import DataLoader
 from torch.utils.data import DistributedSampler
 from torch.utils.data import RandomSampler
 from torchvision import transforms
 
 from common.data import ImageDataset
-from diffusion.consts import DATA_DIR
-from diffusion.consts import EVAL_SPLIT
-from diffusion.consts import TRAIN_SPLIT
 
 
-def create_train_data_loader(batch_size: int, max_steps: int, resolution: int, num_workers: int = 5) -> DataLoader:
+def create_train_data_loader(
+	data_dir: str,
+	batch_size: int,
+	max_steps: int,
+	resolution: int,
+	num_workers: int = 5,
+) -> DataLoader:
 	dataset = ImageDataset(
-		root=os.path.join(DATA_DIR, TRAIN_SPLIT),
+		root=data_dir,
 		transform=transforms.Compose([
 			transforms.Resize(resolution),
 			transforms.RandomHorizontalFlip(),
@@ -30,9 +31,9 @@ def create_train_data_loader(batch_size: int, max_steps: int, resolution: int, n
 	)
 
 
-def create_eval_data_loader(batch_size: int, resolution: int, num_workers: int = 5) -> DataLoader:
+def create_eval_data_loader(data_dir: str, batch_size: int, resolution: int, num_workers: int = 5) -> DataLoader:
 	dataset = ImageDataset(
-		root=os.path.join(DATA_DIR, EVAL_SPLIT),
+		root=data_dir,
 		transform=transforms.Compose([
 			transforms.Resize(resolution),
 			transforms.CenterCrop(resolution),
