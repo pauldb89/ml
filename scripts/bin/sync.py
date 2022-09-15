@@ -15,7 +15,7 @@ def main():
     source = args.source_dir
     target = f"{args.target_username}@{args.target_host}:/home/{args.target_username}/{args.target_dir}"
 
-    rsync_command = f"rsync -avz --exclude=.git/ {source} {target}"
+    rsync_command = f"rsync -avz --delete --exclude=.git/ {source} {target}"
     bash_command = f"while ! {rsync_command}; do sleep 5; done"
     command = f"fswatch -o {source} | xargs -n1 sh -c '{bash_command}'"
 
