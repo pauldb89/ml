@@ -53,6 +53,7 @@ def summarize(step: int, epoch: int, raw_metrics: Dict[str, Any], models: Dict[s
 				print_once(f"Generating image samples took {time.time() - start_time} seconds")
 				model.train()
 
+
 def main():
 	torch.distributed.init_process_group("nccl")
 	local_rank = int(os.environ["LOCAL_RANK"])

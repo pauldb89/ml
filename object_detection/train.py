@@ -7,8 +7,11 @@ import torch.distributed
 from torch.nn.parallel import DistributedDataParallel
 from torch.optim.lr_scheduler import LambdaLR
 
+from common.consts import WANDB_DIR
 from common.distributed import print_once
 from common.solver import Solver
+from common.wandb import wandb_config_update
+from common.wandb import wandb_init
 from object_detection.coco_consts import EVAL_ANNOTATION_FILE
 from object_detection.coco_consts import EVAL_ROOT_DIR
 from object_detection.coco_consts import TRAIN_ANNOTATION_FILE
@@ -35,12 +38,16 @@ def main():
     local_rank = int(os.environ["LOCAL_RANK"])
     torch.cuda.set_device(local_rank)
 
+    wandb_init(project="object-detection", dir=WANDB_DIR)
+
     parser = ArgumentParser()
     parser.add_argument("--num_images_per_batch", type=int, default=1, help="Number of images per batch")
     parser.add_argument("--lr", type=float, default=0.02, help="Learning rate")
     parser.add_argument("--max_steps", type=int, default=90_000, help="Number of training iterations")
     parser.add_argument("--warmup_steps", type=int, default=1000, help="Number of learning rate warmup steps")
     args = parser.parse_args()
+
+    wandb_config_update(args)
 
     train_data_loader = create_train_data_loader(
         root_dir=TRAIN_ROOT_DIR,

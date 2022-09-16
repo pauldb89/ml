@@ -7,6 +7,7 @@ from typing import Protocol
 
 import numpy as np
 import torch.optim
+import wandb
 from torch import nn
 from torch.cuda.amp import GradScaler
 from torch.cuda.amp import autocast
@@ -16,6 +17,7 @@ from torch.utils.data import DataLoader
 
 from common.distributed import is_root_process
 from common.distributed import world_size
+from common.wandb import wandb_log
 
 
 class TimeStat:
@@ -81,6 +83,11 @@ class Throughput:
         return (self.end_value - self.start_value) / self.time_stat.get()
 
 
+class ModelType:
+    REGULAR = "regular"
+    AVERAGE = "avg"
+
+
 class EvalFunction(Protocol):
     def __call__(self, step: int, model: nn.Module) -> None:
         ...
@@ -135,9 +142,18 @@ class Solver:
         self.snapshot_dir = snapshot_dir
         self.snapshot_every_n_steps = snapshot_every_n_steps
 
+    def save_model(self, model: nn.Module, step: int, model_type: str) -> None:
+        model_file = os.path.join(self.snapshot_dir, f"step-{step}-{model_type}.pt")
+        torch.save(model.state_dict(), model_file)
+
+        if wandb.run is not None:
+            artifact = wandb.Artifact(f'{wandb.run.project}-{wandb.run.name}-{model_type}', type="model")
+            artifact.add_file(model_file, "model.pt")
+            wandb.log_artifact(artifact)
+
     def execute(self):
         if self.evaluate_at_start:
-            self.eval_fn(model=self.model.module, step="0")
+            self.eval_fn(model=self.model.module, step=0)
 
         self.optimizer.zero_grad()
         scaler = GradScaler()
@@ -188,9 +204,22 @@ class Solver:
                 if is_root_process() and self.log_every_n_steps is not None and step % self.log_every_n_steps == 0:
                     throughput.end((step+1) * len(batch) * world_size())
 
+                    last_lr = self.lr_scheduler.get_last_lr()[0]
+                    wandb_log(
+                        {
+                            "lr": last_lr,
+                            "epoch": epoch,
+                            "avg_loss": np.mean(loss_history),
+                            "data_load_time": timer.get(TimeKey.DATA_LOAD),
+                            "forward_time": timer.get(TimeKey.FORWARD),
+                            "backward_time": timer.get(TimeKey.BACKWARD),
+                            "throughput": throughput.get(),
+                        },
+                        step=step,
+                    )
                     print(
                         f"Step {step}: Epoch {epoch}\t"
-                        f"LR {self.lr_scheduler.get_last_lr()[0]:.8f}\t"
+                        f"LR {last_lr:.8f}\t"
                         f"Loss {np.mean(loss_history):.5f}\t"
                         f"Data load time {timer.get(TimeKey.DATA_LOAD):.5f} seconds\t"
                         f"Forward time {timer.get(TimeKey.FORWARD):.5f} seconds\t"
@@ -210,9 +239,10 @@ class Solver:
                 if (is_root_process()
                         and self.snapshot_dir is not None and self.snapshot_every_n_steps is not None
                         and step > 0 and step % self.snapshot_every_n_steps == 0):
-                    torch.save(self.model.module.state_dict(), os.path.join(self.snapshot_dir, f"step-{step}.pt"))
+                    self.save_model(model=self.model.module, step=step, model_type=ModelType.REGULAR)
+
                     if self.avg_model is not None:
-                        torch.save(self.avg_model.state_dict(), os.path.join(self.snapshot_dir, f"step-{step}-avg.pt"))
+                        self.save_model(self.avg_model, step=step, model_type=ModelType.AVERAGE)
 
                 timer.start(TimeKey.DATA_LOAD)
 
@@ -225,7 +255,7 @@ class Solver:
 
         if (is_root_process()
                 and self.snapshot_dir is not None and self.snapshot_every_n_steps is not None):
-            torch.save(self.model.module.state_dict(), os.path.join(self.snapshot_dir, "final.pt"))
-            if self.avg_model is not None:
-                torch.save(self.avg_model.state_dict(), os.path.join(self.snapshot_dir, "final-avg.pt"))
+            self.save_model(self.model.module, step=step, model_type=ModelType.REGULAR)
 
+            if self.avg_model is not None:
+                self.save_model(self.avg_model, step=step, model_type=ModelType.AVERAGE)

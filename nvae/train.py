@@ -9,11 +9,13 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.optim.lr_scheduler import LinearLR
 from torch.optim.lr_scheduler import SequentialLR
 
-from common.distributed import is_root_process
+from common.consts import WANDB_DIR
 from common.distributed import print_once
 from common.distributed import world_size
 from common.samplers import set_seeds
 from common.solver import Solver
+from common.wandb import wandb_config_update
+from common.wandb import wandb_init
 from nvae.consts import DATASETS_DIR
 from nvae.data import create_eval_data_loader
 from nvae.data import create_train_data_loader
@@ -28,6 +30,8 @@ def main():
     torch.cuda.set_device(local_rank)
 
     set_seeds(local_rank)
+
+    wandb_init(project="nvae", dir=WANDB_DIR)
 
     parser = ArgumentParser()
     parser.add_argument("--batch_size", type=int, default=4, help="Batch size")
@@ -68,6 +72,8 @@ def main():
     parser.add_argument("--reg_weight", type=float, default=0.1, help="Target weight for regularization losses")
     parser.add_argument("--output_dir", type=str, required=True, help="Output directory")
     args = parser.parse_args()
+
+    wandb_config_update(args)
 
     os.makedirs(args.output_dir, exist_ok=True)
 

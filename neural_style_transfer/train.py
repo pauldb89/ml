@@ -8,8 +8,11 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.optim.lr_scheduler import LinearLR
 from torch.optim.lr_scheduler import SequentialLR
 
+from common.consts import WANDB_DIR
 from common.distributed import print_once
 from common.solver import Solver
+from common.wandb import wandb_config_update
+from common.wandb import wandb_init
 from neural_style_transfer.consts import COCO_EVAL
 from neural_style_transfer.consts import COCO_TRAIN
 from neural_style_transfer.consts import WIKIART_EVAL
@@ -25,6 +28,8 @@ def main():
     local_rank = int(os.environ["LOCAL_RANK"])
     torch.cuda.set_device(local_rank)
 
+    wandb_init(project="neural-style-transfer", dir=WANDB_DIR)
+
     parser = ArgumentParser()
     parser.add_argument("--style_weight", type=float, default=50.0, help="How much weight to assign to style loss")
     parser.add_argument("--batch_size", type=int, default=16, help="Batch size")
@@ -34,6 +39,8 @@ def main():
     parser.add_argument("--snapshot_dir", type=str, default=None, help="Model snapshot directory")
     parser.add_argument("--snapshot_every_n_steps", type=int, default=1000, help="Snapshotting frequency")
     args = parser.parse_args()
+
+    wandb_config_update(args)
 
     train_data_loader = create_train_data_loader(
         content_root_dir=COCO_TRAIN,

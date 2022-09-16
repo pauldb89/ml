@@ -13,9 +13,12 @@ from torch.optim.lr_scheduler import LinearLR
 from torch.optim.lr_scheduler import SequentialLR
 from torch.optim.lr_scheduler import StepLR
 
+from common.consts import WANDB_DIR
 from common.distributed import print_once
 from common.distributed import world_size
 from common.solver import Solver
+from common.wandb import wandb_config_update
+from common.wandb import wandb_init
 from object_classification.data import DATASETS
 from object_classification.data import get_eval_data_loader
 from object_classification.data import get_train_data_loader
@@ -33,6 +36,8 @@ def main():
     local_rank = int(os.environ["LOCAL_RANK"])
     torch.distributed.init_process_group("nccl", timeout=datetime.timedelta(minutes=10))
     torch.cuda.set_device(local_rank)
+
+    wandb_init(project="object-classification", dir=WANDB_DIR)
 
     parser = ArgumentParser()
     parser.add_argument("--dataset_name", type=str, default="imagenet", help="Dataset name")
@@ -55,6 +60,8 @@ def main():
     parser.add_argument("--model_avg_decay", type=float, default=None, help="Exponential model average decay parameter")
     parser.add_argument("--model_avg_steps", type=int, default=32, help="Frequency for updating averaged model")
     args = parser.parse_args()
+
+    wandb_config_update(args)
 
     torch.manual_seed(0)
     np.random.seed(0)
