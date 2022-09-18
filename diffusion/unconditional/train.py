@@ -8,6 +8,7 @@ from typing import Dict
 import torch.distributed
 import wandb
 from torch import nn
+import torch.nn.functional as F
 from torch.nn.parallel import DistributedDataParallel
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import ConstantLR
@@ -37,8 +38,18 @@ from diffusion.unconditional.model import DiffusionModel
 from diffusion.common.noise_schedule import LinearNoiseSchedule
 
 
-def summarize(step: int, epoch: int, raw_metrics: Dict[str, Any], models: Dict[str, nn.Module]) -> None:
+def summarize(
+	step: int,
+	epoch: int,
+	raw_metrics: Dict[str, Any],
+	models: Dict[str, nn.Module],
+	sample_every_n_steps: int = 5_000,
+	target_resolution: int = 256,
+) -> None:
 	wandb_log({"train_loss": raw_metrics["loss"].item()}, step=step)
+
+	if step % sample_every_n_steps != 0:
+		return
 
 	if is_root_process():
 		with torch.inference_mode():
@@ -47,6 +58,11 @@ def summarize(step: int, epoch: int, raw_metrics: Dict[str, Any], models: Dict[s
 				model.eval()
 				start_time = time.time()
 				images = model.sample(batch_size=9)
+				images = F.interpolate(
+					images,
+					scale_factor=max(1, target_resolution / model.resolution),
+					mode="nearest",
+				)
 				image_grid = make_grid(images, nrow=3)
 
 				image_transform = transforms.ToPILImage()
@@ -105,9 +121,19 @@ def main():
 		default=2e-2,
 		help="Final beta for when a linear schedule is used for the forward process noise variance",
 	)
+	parser.add_argument("--p2_loss_gamma", type=float, default=0.0, help="Exponent from P2 loss weighting formula")
+	parser.add_argument(
+		"--self_conditioning_rate",
+		type=float,
+		default=0.0,
+		help="Training trick to first infer a noisy start image and the condition on it",
+	)
 	parser.add_argument("--output_dir", type=str, required=True, help="Output directory")
 	parser.add_argument("--ema_decay", type=float, default=0.995, help="Model averaging exponential weight decay")
 	parser.add_argument("--num_fid_samples", type=int, default=2048, help="Number of samples for evaluating FID score")
+	parser.add_argument(
+		"--attention_block_ids", type=str, default="3", help="Scales at which to apply attention blocks"
+	)
 
 	args = parser.parse_args()
 	wandb_config_update(args)
@@ -143,6 +169,9 @@ def main():
 		num_diffusion_steps=args.num_diffusion_steps,
 		noise_schedule=noise_schedule,
 		resolution=args.resolution,
+		p2_loss_gamma=args.p2_loss_gamma,
+		attention_block_ids=frozenset(map(int, args.attention_block_ids.split(","))),
+		self_conditioning_rate=args.self_conditioning_rate,
 	)
 	model.cuda()
 	model = DistributedDataParallel(model)
@@ -180,12 +209,12 @@ def main():
 		max_grad_norm=args.max_grad_norm,
 		log_every_n_steps=1_000,
 		summarize_fn=functools.partial(summarize, models={"regular": model.module, "avg": avg_model}),
-		summarize_every_n_steps=5_000,
+		summarize_every_n_steps=1_000,
 		avg_model=avg_model,
 		eval_avg_model_fn=functools.partial(eval_fn, eval_swag=True),
 		evaluate_avg_model_every_n_steps=500_000,
 		snapshot_dir=args.output_dir,
-		snapshot_every_n_steps=5_000,
+		snapshot_every_n_steps=50_000,
 	)
 
 	solver.execute()

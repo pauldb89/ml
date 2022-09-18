@@ -1,5 +1,4 @@
 import torch
-import wandb
 
 from common.wandb import WANDB_DIR
 from common.wandb import wandb_init

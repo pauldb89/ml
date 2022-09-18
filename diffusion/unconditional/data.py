@@ -31,7 +31,13 @@ def create_train_data_loader(
 	)
 
 
-def create_eval_data_loader(data_dir: str, batch_size: int, resolution: int, num_workers: int = 5) -> DataLoader:
+def create_eval_data_loader(
+	data_dir: str,
+	batch_size: int,
+	resolution: int,
+	drop_last: bool = False,
+	num_workers: int = 5,
+) -> DataLoader:
 	dataset = ImageDataset(
 		root=data_dir,
 		transform=transforms.Compose([
@@ -44,6 +50,6 @@ def create_eval_data_loader(data_dir: str, batch_size: int, resolution: int, num
 		dataset=dataset,
 		sampler=DistributedSampler(dataset=dataset, shuffle=False),
 		batch_size=batch_size,
-		drop_last=False,
+		drop_last=drop_last,
 		num_workers=num_workers,
 	)

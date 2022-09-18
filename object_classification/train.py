@@ -110,7 +110,6 @@ def main():
 
     num_steps_per_epoch = len(train_data_loader.dataset) // (args.batch_size * world_size())
 
-
     model.to(torch.device("cuda"))
     model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[local_rank], output_device=local_rank)
     print(f"Model created on rank: {local_rank}")

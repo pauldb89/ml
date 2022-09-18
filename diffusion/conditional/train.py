@@ -9,6 +9,7 @@ from typing import Tuple
 import torch.distributed
 import wandb
 from torch import nn
+import torch.nn.functional as F
 from torch.nn.parallel import DistributedDataParallel
 from torch.optim.lr_scheduler import ConstantLR
 from torch.optim.lr_scheduler import LinearLR
@@ -44,6 +45,7 @@ def summarize(
 	guidance_strengths: Tuple[float, ...] = (0.5, ),
 	# guidance_strengths: Tuple[float, ...] = (-1.0, -0.5, 0., 0.5, 1.0),
 	sample_every_n_steps: int = 5_000,
+	target_resolution: int = 256,
 ):
 	wandb_log({k: v.item() for k, v in summary_metrics.items()}, step=step)
 	if step == 0 or step % sample_every_n_steps != 0:
@@ -57,6 +59,11 @@ def summarize(
 				print(f"Sampling a batch of {len(guidance_batch)} images from model {model_name}...")
 				start_time = time.time()
 				images = model.sample(batch=guidance_batch, guidance_strength=guidance_strength)
+				images = F.interpolate(
+					images,
+					scale_factor=max(1.0, target_resolution / model.resolution),
+					mode="nearest",
+				)
 				for idx, image in enumerate(torch.chunk(images, chunks=len(guidance_batch), dim=0)):
 					pil_image = image_transform(torch.squeeze(image, dim=0))
 					wandb_image = wandb.Image(pil_image, caption=guidance_batch.raw_captions[idx])
@@ -193,7 +200,7 @@ def main():
 		eval_avg_model_fn=functools.partial(eval_fn, eval_swag=True),
 		evaluate_avg_model_every_n_steps=500,
 		snapshot_dir=args.output_dir,
-		snapshot_every_n_steps=5_000,
+		snapshot_every_n_steps=50_000,
 	)
 
 	solver.execute()

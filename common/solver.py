@@ -15,6 +15,7 @@ from torch.nn.parallel import DistributedDataParallel
 from torch.optim.lr_scheduler import _LRScheduler  # noqa
 from torch.utils.data import DataLoader
 
+from common.distributed import get_rank
 from common.distributed import is_root_process
 from common.distributed import world_size
 from common.wandb import wandb_log
@@ -182,6 +183,7 @@ class Solver:
 
                 timer.start(TimeKey.BACKWARD)
                 scaler.scale(loss).backward()
+
                 if self.max_grad_norm is not None:
                     scaler.unscale_(self.optimizer)
                     torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)

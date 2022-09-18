@@ -13,7 +13,6 @@ from transformers import AutoConfig
 from transformers import CLIPTextModel
 from transformers import T5EncoderModel
 
-from common.distributed import print_once
 from diffusion.common.modules import ConvBlock
 from diffusion.common.modules import ResolutionMode
 from diffusion.common.modules import SelfAttentionBlock
@@ -436,5 +435,9 @@ class ConditionalDiffusionModel(nn.Module):
 
 
 class AverageModelWrapper(AveragedModel):
+	@property
+	def resolution(self) -> int:
+		return self.module.resolution
+
 	def sample(self, *args, **kwargs) -> torch.Tensor:
 		return self.module.sample(*args, **kwargs)

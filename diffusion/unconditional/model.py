@@ -1,11 +1,14 @@
+import random
 from typing import Dict
 from typing import FrozenSet
+from typing import Optional
 from typing import Tuple
 
 import torch
 import torch.nn.functional as F
 from torch import nn
 
+from common.distributed import get_rank
 from diffusion.common.modules import SelfAttentionBlock
 from diffusion.common.modules import ConvBlock
 from diffusion.common.modules import ResolutionMode
@@ -104,12 +107,14 @@ class DenoisingModel(nn.Module):
 		scale_channel_multipliers: Tuple[int, ...],
 		attention_block_ids: FrozenSet[int],
 		time_embed_dim: int,
+		self_conditioning: bool,
 	):
 		super().__init__()
 
 		self.num_scales = len(scale_channel_multipliers)
 
 		self.initial_channels = initial_channels
+		self.self_conditioning = self_conditioning
 
 		self.out_channels = [self.initial_channels * multiplier for multiplier in scale_channel_multipliers]
 		self.in_channels = [self.initial_channels] + self.out_channels[:-1]
@@ -120,7 +125,9 @@ class DenoisingModel(nn.Module):
 			nn.GELU(),
 			nn.Linear(time_embed_dim, time_embed_dim),
 		)
-		self.init_conv = nn.Conv2d(in_channels=3, out_channels=initial_channels, kernel_size=3, padding=1)
+
+		input_channels = 6 if self.self_conditioning else 3
+		self.init_conv = nn.Conv2d(in_channels=input_channels, out_channels=initial_channels, kernel_size=3, padding=1)
 
 		self.encoder_layers = nn.ModuleList()
 		self.decoder_layers = nn.ModuleList()
@@ -162,10 +169,23 @@ class DenoisingModel(nn.Module):
 
 		self.out_conv = nn.Conv2d(in_channels=initial_channels, out_channels=3, kernel_size=1)
 
-	def forward(self, noised_images: torch.Tensor, diffusion_steps: torch.Tensor) -> torch.Tensor:
+	def forward(
+		self,
+		noisy_images: torch.Tensor,
+		diffusion_steps: torch.Tensor,
+		inferred_original_images: Optional[torch.Tensor],
+	) -> torch.Tensor:
 		time_embedding = self.time_embedder_mlp(diffusion_steps)
 
-		x = self.init_conv(noised_images)
+		if self.self_conditioning:
+			if inferred_original_images is None:
+				inferred_original_images = torch.zeros_like(noisy_images)
+			x = torch.cat([noisy_images, inferred_original_images], dim=1)
+		else:
+			assert inferred_original_images is None
+			x = noisy_images
+
+		x = self.init_conv(x)
 
 		encoder_states = []
 		for block_id, encoder_layer in enumerate(self.encoder_layers):
@@ -190,13 +210,20 @@ class DiffusionModel(nn.Module):
 		num_blocks_per_scale: int = 2,
 		scale_channel_multipliers: Tuple[int, ...] = (1, 1, 2, 2, 4, 4),
 		attention_block_ids: FrozenSet[int] = frozenset([3]),
-		resolution: int = 256,
+		resolution: int = 128,
+		p2_loss_gamma: float = 0.0,
+		p2_loss_k: float = 1.0,
+		self_conditioning_rate: float = 0.0,
 	):
 		super().__init__()
 
 		self.num_diffusion_steps = num_diffusion_steps
 		self.resolution = resolution
 		self.noise_schedule = noise_schedule
+
+		self.p2_loss_gamma = p2_loss_gamma
+		self.p2_loss_k = p2_loss_k
+		self.self_conditioning_rate = self_conditioning_rate
 
 		self.register_buffer("steps", torch.tensor(0))
 		self.model = DenoisingModel(
@@ -205,6 +232,7 @@ class DiffusionModel(nn.Module):
 			scale_channel_multipliers=scale_channel_multipliers,
 			attention_block_ids=attention_block_ids,
 			time_embed_dim=initial_channels * 4,
+			self_conditioning=self.self_conditioning_rate > 0,
 		)
 
 	def apply_noise(self, images: torch.Tensor, diffusion_steps: torch.Tensor, noise: torch.Tensor) -> torch.Tensor:
@@ -223,6 +251,26 @@ class DiffusionModel(nn.Module):
 		alpha_bars = self.noise_schedule.get_alpha_bars(diffusion_steps)
 		return torch.sqrt(alpha_bars) * images + torch.sqrt(1 - alpha_bars) * noise
 
+	def infer_original_images(
+		self,
+		noisy_images: torch.Tensor,
+		inferred_noise: torch.Tensor,
+		diffusion_steps: torch.Tensor,
+	) -> torch.Tensor:
+		"""
+		Compute expected original image based on a set of noisy images at time t and the inferred noised.
+		Clip the resulting images to [-1, 1], useful for producing high quality samples.
+
+		x_0(x_t, t) = 1 / sqrt(alpha_bar_t) * x_t - sqrt(1 - alpha_bar_t) / sqrt(alpha_bar_t) * eps(x_t, t)
+		x_0(x_t, t) <- clip(x_0(x_t, t), -1, 1).
+
+		The formula can be derived from Equation (4) in https://arxiv.org/pdf/2006.11239v2.pdf. Some discussion on
+		the importance of clipping can be found in Section 2.3 of https://arxiv.org/pdf/2205.11487.pdf.
+		"""
+		alpha_bars = self.noise_schedule.get_alpha_bars(diffusion_steps)
+		original_image = (noisy_images - torch.sqrt(1 - alpha_bars) * inferred_noise) / torch.sqrt(alpha_bars)
+		return torch.clip(original_image, min=-1, max=1.0)
+
 	def forward(self, images: torch.Tensor) -> Dict[str, torch.Tensor]:
 		"""
 		This implements the training loop for diffusion models (DDPM). For more details, see Algorithm 1 from
@@ -236,20 +284,48 @@ class DiffusionModel(nn.Module):
 
 		noise = torch.randn_like(images)
 
-		noised_images = self.apply_noise(images=images, diffusion_steps=diffusion_steps, noise=noise)
+		noisy_images = self.apply_noise(images=images, diffusion_steps=diffusion_steps, noise=noise)
 
-		inferred_noise = self.model(noised_images=noised_images, diffusion_steps=diffusion_steps)
+		inferred_original_images = None
+		if random.random() <= self.self_conditioning_rate:
+			inferred_noise = self.model(
+				noisy_images=noisy_images,
+				diffusion_steps=diffusion_steps,
+				inferred_original_images=None,
+			)
+			inferred_original_images = self.infer_original_images(
+				noisy_images=noisy_images,
+				inferred_noise=inferred_noise,
+				diffusion_steps=diffusion_steps,
+			).detach()
 
+		inferred_noise = self.model(
+			noisy_images=noisy_images,
+			diffusion_steps=diffusion_steps,
+			inferred_original_images=inferred_original_images,
+		)
+
+		mse_loss = torch.mean(F.mse_loss(noise, inferred_noise, reduction="none"), dim=[1, 2, 3])
 		return {
-			"loss": F.mse_loss(noise, inferred_noise)
+			"loss": torch.mean(mse_loss * self.p2_loss_weight(diffusion_steps))
 		}
+
+	def p2_loss_weight(self, diffusion_steps: torch.Tensor) -> torch.Tensor:
+		"""
+		Implement perceptual prioritized loss weighting from https://arxiv.org/abs/2204.00227.
+
+		Setting p2_loss_gamma=0.0 makes the loss weights 1.0 as in the original implementation proposed in
+		https://arxiv.org/pdf/2006.11239.pdf.
+		"""
+		alpha_bars = self.noise_schedule.get_alpha_bars(diffusion_steps).view(-1)
+		return (self.p2_loss_k + alpha_bars / (1 - alpha_bars)) ** -self.p2_loss_gamma
 
 	def reverse_process_mean(
 		self,
 		images: torch.Tensor,
 		diffusion_steps: torch.Tensor,
 		inferred_noise: torch.Tensor,
-	) -> torch.Tensor:
+	) -> Tuple[torch.Tensor, torch.Tensor]:
 		"""
 		Computes the posterior mean of the images at the previous diffusion step (e.g. t-1) given the images at
 		step t and the inferred noise going from t -> t-1.
@@ -273,12 +349,16 @@ class DiffusionModel(nn.Module):
 		alpha_bars_t = self.noise_schedule.get_alpha_bars(diffusion_steps)
 		alpha_bars_prev_t = self.noise_schedule.get_alpha_bars_prev(diffusion_steps)
 		# return (images - (1 - alphas) / torch.sqrt(1 - alpha_bars) * inferred_noise) / torch.sqrt(alphas)
-		start_images = (images - torch.sqrt(1 - alpha_bars_t) * inferred_noise) / torch.sqrt(alpha_bars_t)
-		start_images = torch.clip(start_images, min=-1, max=1)
-		return (
-			torch.sqrt(alpha_bars_prev_t) * (1 - alphas) * start_images +
+		original_images = self.infer_original_images(
+			noisy_images=images,
+			inferred_noise=inferred_noise,
+			diffusion_steps=diffusion_steps,
+		)
+		mean = (
+			torch.sqrt(alpha_bars_prev_t) * (1 - alphas) * original_images +
 			torch.sqrt(alphas) * (1 - alpha_bars_prev_t) * images
 		) / (1 - alpha_bars_t)
+		return mean, original_images
 
 	def reverse_process_std(self, diffusion_steps: torch.Tensor) -> torch.Tensor:
 		"""
@@ -303,11 +383,21 @@ class DiffusionModel(nn.Module):
 		https://arxiv.org/pdf/2006.11239v2.pdf.
 		"""
 		images = torch.randn(batch_size, 3, self.resolution, self.resolution, device="cuda")
+		inferred_original_images = None
+
 		for diffusion_step in reversed(range(self.num_diffusion_steps)):
 			diffusion_steps = torch.full(size=(batch_size,), fill_value=diffusion_step, device="cuda")
-			inferred_noise = self.model(images, diffusion_steps=diffusion_steps)
 
-			mean = self.reverse_process_mean(
+			if self.self_conditioning_rate == 0:
+				inferred_original_images = None
+
+			inferred_noise = self.model(
+				images,
+				diffusion_steps=diffusion_steps,
+				inferred_original_images=inferred_original_images,
+			)
+
+			mean, inferred_original_images = self.reverse_process_mean(
 				images=images,
 				diffusion_steps=diffusion_steps,
 				inferred_noise=inferred_noise,
@@ -323,5 +413,9 @@ class DiffusionModel(nn.Module):
 
 
 class AverageModelWrapper(torch.optim.swa_utils.AveragedModel):
+	@property
+	def resolution(self) -> int:
+		return self.module.resolution
+
 	def sample(self, *args, **kwargs) -> torch.Tensor:
 		return self.module.sample(*args, **kwargs)
