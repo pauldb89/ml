@@ -13,11 +13,16 @@ RUN apt-get update && \
         git \
         libbz2-dev \
         libffi-dev \
+        libgl1-mesa-glx \
+        libglu1 \
+        libglfw3 \
         liblzma-dev \
+        libosmesa6-dev \
         libsm6 \
         libsqlite3-dev \
         libssl-dev \
         libxext6 \
+        patchelf \
         python-dev \
         python3-setuptools \
         vim \
@@ -39,6 +44,19 @@ RUN alias python='/usr/local/bin/python3.9'
 RUN alias pip3.9="python3.9 -m pip"
 
 RUN pip3.9 install --upgrade pip==20.1.1 setuptools==45.3.0
+
+RUN cd /opt && \
+    wget https://mujoco.org/download/mujoco210-linux-x86_64.tar.gz && \
+    tar -xvf mujoco210-linux-x86_64.tar.gz && \
+    rm -rf mujoco210-linux-x86_64.tar.gz
+
+ENV MUJOCO_PY_MUJOCO_PATH="/opt/mujoco210"
+
+ENV LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:${MUJOCO_PY_MUJOCO_PATH}/bin"
+
+ENV MUJOCO_GL=egl
+
+RUN ln -s /usr/lib/x86_64-linux-gnu/libGL.so.1 /usr/lib/x86_64-linux-gnu/libGL.so
 
 COPY requirements.txt .
 

@@ -13,7 +13,7 @@ from common.consts import WANDB_DIR
 from common.distributed import print_once
 from common.distributed import world_size
 from common.samplers import set_seeds
-from common.solver import Solver
+from common.solvers.solver import Solver
 from common.wandb import wandb_config_update
 from common.wandb import wandb_init
 from nvae.consts import DATASETS_DIR

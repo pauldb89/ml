@@ -21,7 +21,7 @@ from common.distributed import is_root_process
 from common.distributed import print_once
 from common.fid_evaluator import FIDEvaluator
 from common.samplers import set_seeds
-from common.solver import Solver
+from common.solvers.solver import Solver
 from common.wandb import WANDB_DIR
 from common.wandb import wandb_config_update
 from common.wandb import wandb_init

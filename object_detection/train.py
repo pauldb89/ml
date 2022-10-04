@@ -12,7 +12,7 @@ from common.consts.coco_consts import EVAL_ROOT_DIR
 from common.consts.coco_consts import TRAIN_ANNOTATION_FILE
 from common.consts.coco_consts import TRAIN_ROOT_DIR
 from common.distributed import print_once
-from common.solver import Solver
+from common.solvers.solver import Solver
 from common.wandb import WANDB_DIR
 from common.wandb import wandb_config_update
 from common.wandb import wandb_init

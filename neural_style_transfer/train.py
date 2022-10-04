@@ -10,7 +10,7 @@ from torch.optim.lr_scheduler import SequentialLR
 
 from common.consts import WANDB_DIR
 from common.distributed import print_once
-from common.solver import Solver
+from common.solvers.solver import Solver
 from common.wandb import wandb_config_update
 from common.wandb import wandb_init
 from neural_style_transfer.consts import COCO_EVAL
