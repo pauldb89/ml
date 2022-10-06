@@ -18,7 +18,7 @@ from common.wandb import wandb_log
 
 
 class Policy(Protocol):
-    def loss(self, states: torch.Tensor, actions: torch.Tensor) -> Dict[str, torch.Tensor]:
+    def imitation_loss(self, states: torch.Tensor, actions: torch.Tensor) -> Dict[str, torch.Tensor]:
         ...
 
     def sample(self, states: torch.Tensor) -> torch.Tensor:
@@ -96,7 +96,7 @@ class BehaviorCloningSolver:
             batch = self.replay_buffer.sample(batch_size=self.batch_size)
 
             with torch.cuda.amp.autocast():
-                loss_metrics = self.policy.loss(batch.states, batch.actions)
+                loss_metrics = self.policy.imitation_loss(batch.states, batch.actions)
                 total_loss = loss_metrics["loss"]
                 loss_history.append(total_loss.item())
 
