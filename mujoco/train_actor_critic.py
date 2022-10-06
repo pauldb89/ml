@@ -8,10 +8,11 @@ from torch.optim import Adam
 
 from common.distributed import world_size
 from common.samplers import set_seeds
-from common.solvers.policy_gradient import PolicyGradientSolver
+from common.solvers.actor_critic import ActorCriticSolver
 from common.wandb import WANDB_DIR
 from common.wandb import wandb_config_update
 from common.wandb import wandb_init
+from mujoco.model import BaselineEstimator
 from mujoco.model import DiscreteMLPPolicy
 
 
@@ -39,12 +40,23 @@ def main():
     parser.add_argument("--lr", type=float, default=5e-3, help="Learning rate")
     parser.add_argument("--num_layers", type=int, default=2, help="Number of layers")
     parser.add_argument("--hidden_dim", type=int, default=64, help="Dimension of hidden layers in policy")
-    parser.add_argument("--skip_normalize", default=False, action="store_true", help="Skip normalizing returns")
     parser.add_argument(
-        "--skip_reward_to_go",
+        "--baseline_train_steps_per_epoch",
+        type=int,
+        default=100,
+        help="Number of optimization iterations to perform to optimize the baseline estimator per epoch",
+    )
+    parser.add_argument(
+        "--baseline_batch_size",
+        type=int,
+        default=100,
+        help="Batch size for updating the baseline estimator"
+    )
+    parser.add_argument(
+        "--normalize_advantage",
         default=False,
         action="store_true",
-        help="Skip the variance reduction trick that exploits causality by summing only over the trailing actions"
+        help="Whether to normalize the advantages to have mean 0 and std 1",
     )
     args = parser.parse_args()
 
@@ -63,18 +75,26 @@ def main():
     policy.cuda()
     policy = DistributedDataParallel(policy)
 
-    optimizer = Adam(policy.parameters(), lr=args.lr)
+    baseline_estimator = BaselineEstimator(env=train_env, num_layers=args.num_layers, hidden_dim=args.hidden_dim)
+    baseline_estimator.cuda()
+    baseline_estimator = DistributedDataParallel(baseline_estimator)
 
-    solver = PolicyGradientSolver(
+    policy_optimizer = Adam(policy.parameters(), lr=args.lr)
+    baseline_optimizer = Adam(baseline_estimator.parameters(), lr=args.lr)
+
+    solver = ActorCriticSolver(
         train_env=train_env,
         eval_env=eval_env,
         policy=policy,
-        optimizer=optimizer,
+        policy_optimizer=policy_optimizer,
+        baseline_estimator=baseline_estimator,
+        baseline_optimizer=baseline_optimizer,
         epochs=args.epochs,
         num_samples_per_epoch=args.num_samples_per_epoch,
         discount=args.discount,
-        normalize_returns=not args.skip_normalize,
-        reward_to_go=not args.skip_reward_to_go,
+        baseline_train_steps_per_epoch=args.baseline_train_steps_per_epoch,
+        baseline_batch_size=args.baseline_batch_size,
+        normalize_advantage=args.normalize_advantage,
     )
 
     solver.execute()

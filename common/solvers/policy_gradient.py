@@ -21,20 +21,20 @@ from common.wandb import wandb_log
 class Batch(NamedTuple):
     states: torch.Tensor
     actions: torch.Tensor
+    rewards: torch.Tensor
+    terminal_states: torch.Tensor
     returns: torch.Tensor
 
 
-class PolicyGradientSolver:
+class PolicySolver:
     def __init__(
         self,
         train_env: gym.Env,
         eval_env: gym.Env,
         policy: DistributedDataParallel,
-        optimizer: Optimizer,
         epochs: int,
         num_samples_per_epoch: int,
         discount: float,
-        normalize_returns: bool,
         reward_to_go: bool = True,
         evaluate_every_n_epochs: int = 20,
         num_eval_episodes: int = 25,
@@ -43,19 +43,15 @@ class PolicyGradientSolver:
         self.train_env = train_env
         self.eval_env = eval_env
         self.policy = policy
-        self.optimizer = optimizer
 
         self.epochs = epochs
         self.num_samples_per_epoch = num_samples_per_epoch
         self.discount = discount
         self.reward_to_go = reward_to_go
-        self.normalize_returns = normalize_returns
 
         self.evaluate_every_n_epochs = evaluate_every_n_epochs
         self.num_eval_episodes = num_eval_episodes
         self.max_videos_to_render = max_videos_to_render
-
-        self.scaler = GradScaler()
 
     def compute_discounted_returns(self, rewards: List[float], terminal_states: List[bool]) -> torch.Tensor:
         if self.reward_to_go:
@@ -79,10 +75,10 @@ class PolicyGradientSolver:
                 cumulative_discount = 1
                 cumulative_reward = 0
 
-        for idx in reversed(range(len(cumulative_rewards)-1)):
+        for idx in reversed(range(len(cumulative_rewards) - 1)):
             if not terminal_states[idx]:
-                cumulative_rewards[idx] = cumulative_rewards[idx+1]
-                
+                cumulative_rewards[idx] = cumulative_rewards[idx + 1]
+
         return torch.tensor(cumulative_rewards)
 
     def collect_data(self, epoch: int) -> Batch:
@@ -130,28 +126,13 @@ class PolicyGradientSolver:
         return Batch(
             states=torch.from_numpy(np.stack(states, axis=0)),
             actions=torch.tensor(actions),
+            rewards=torch.tensor(rewards),
+            terminal_states=torch.tensor(terminal_states),
             returns=self.compute_discounted_returns(rewards, terminal_states)
         )
 
     def train_step(self, epoch: int, batch: Batch) -> None:
-        if self.normalize_returns:
-            returns = (batch.returns - torch.mean(batch.returns)) / (torch.std(batch.returns) + 1e-5)
-        else:
-            returns = batch.returns
-
-        self.optimizer.zero_grad()
-
-        with torch.cuda.amp.autocast():
-            loss_metrics = self.policy.module.policy_gradient_loss(
-                states=batch.states,
-                actions=batch.actions,
-                returns=returns,
-            )
-        loss = loss_metrics["loss"]
-        loss = self.scaler.scale(loss)
-        loss.backward()
-        self.scaler.step(self.optimizer)
-        self.scaler.update()
+        pass
 
     def evaluate(self, epoch: int, should_render: bool) -> None:
         self.policy.eval()
@@ -215,3 +196,52 @@ class PolicyGradientSolver:
                 self.evaluate(epoch=next_epoch, should_render=True)
 
 
+class PolicyGradientSolver(PolicySolver):
+    def __init__(
+        self,
+        train_env: gym.Env,
+        eval_env: gym.Env,
+        policy: DistributedDataParallel,
+        optimizer: Optimizer,
+        epochs: int,
+        num_samples_per_epoch: int,
+        discount: float,
+        normalize_returns: bool,
+        reward_to_go: bool,
+    ):
+        super().__init__(
+            train_env=train_env,
+            eval_env=eval_env,
+            policy=policy,
+            epochs=epochs,
+            num_samples_per_epoch=num_samples_per_epoch,
+            discount=discount,
+            reward_to_go=reward_to_go,
+        )
+
+        self.optimizer = optimizer
+        self.normalize_returns = normalize_returns
+
+        self.scaler = GradScaler()
+
+    def train_step(self, epoch: int, batch: Batch) -> None:
+        if self.normalize_returns:
+            # TODO(pauldb): I think here it's actually recommended to normalize at a single timestep t
+            # across all trajectories (as opposed to all returns).
+            returns = (batch.returns - torch.mean(batch.returns)) / (torch.std(batch.returns) + 1e-5)
+        else:
+            returns = batch.returns
+
+        self.optimizer.zero_grad()
+
+        with torch.cuda.amp.autocast():
+            loss_metrics = self.policy.module.policy_gradient_loss(
+                states=batch.states,
+                actions=batch.actions,
+                returns=returns,
+            )
+        loss = loss_metrics["loss"]
+        loss = self.scaler.scale(loss)
+        loss.backward()
+        self.scaler.step(self.optimizer)
+        self.scaler.update()
