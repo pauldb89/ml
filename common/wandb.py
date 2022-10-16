@@ -5,7 +5,7 @@ from common.distributed import is_root_process
 WANDB_DIR = "/wandb"
 
 
-def wandb_init(*args, **kwargs) -> None:
+def wandb_init(*args: object, **kwargs: object) -> None:
 	if is_root_process():
 		wandb.init(*args, **kwargs)
 
