@@ -1,0 +1,2 @@
+MAX_GUESSES: int = 6
+WORD_LENGTH: int = 5
