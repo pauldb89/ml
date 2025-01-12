@@ -1,4 +1,4 @@
-from board_games.data_models import City
+from board_games.ticket2ride.data_models import City
 
 
 def test_city() -> None:
