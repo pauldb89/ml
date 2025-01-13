@@ -1,20 +1,14 @@
+import abc
 import copy
+import itertools
 import random
+from dataclasses import dataclass, Field
+from enum import StrEnum
 from typing import Self
 
-from pydantic import BaseModel, Field
 
-ROUTE_LENGTHS_TO_VALUES: dict[int, int] = {
-    1: 1,
-    2: 2,
-    3: 4,
-    4: 7,
-    5: 10,
-    6: 15,
-}
-
-
-class Color(BaseModel):
+@dataclass(frozen=True, order=True)
+class Color:
     id: int
     name: str
 
@@ -31,11 +25,36 @@ GREEN = Color(id=7, name="green")
 ANY = Color(id=8, name="any")
 
 
+COLORS = [
+    PURPLE,
+    WHITE,
+    BLUE,
+    YELLOW,
+    ORANGE,
+    BLACK,
+    RED,
+    GREEN,
+]
+
+
 NUM_COLOR_CARDS = 12
 NUM_ANY_CARDS = 14
+NUM_VISIBLE_CARDS = 5
+NUM_INITIAL_PLAYER_CARDS = 4
+NUM_INITIAL_TRAIN_CARS = 45
+NUM_LAST_TURN_CARS = 2
+ROUTE_LENGTHS_TO_VALUES: dict[int, int] = {
+    1: 1,
+    2: 2,
+    3: 4,
+    4: 7,
+    5: 10,
+    6: 15,
+}
 
 
-class City(BaseModel):
+@dataclass(frozen=True)
+class City:
     id: int
     name: str
 
@@ -77,12 +96,39 @@ HOUSTON = City(id=33, name="Houston")
 NEW_ORLEANS = City(id=34, name="New Orleans")
 MIAMI = City(id=35, name="Miami")
 
+ALL_CITIES = [
+    VANCOUVER, CALGARY, WINNIPEG, SAULT_ST_MARIE, MONTREAL, SEATTLE, TORONTO, BOSTON, PORTLAND,
+    HELENA, DULUTH, NEW_YORK, CHICAGO, PITTSBURGH, OMAHA, WASHINGTON, SALT_LAKE_CITY, DENVER,
+    KANSAS_CITY, SAINT_LOUIS, NASHVILLE, RALEIGH, SAN_FRANCISCO, LAS_VEGAS, SANTA_FE, OKLAHOMA_CITY,
+    LITTLE_ROCK, CHARLESTON, LOS_ANGELES, PHOENIX, EL_PASO, DALLAS, HOUSTON, NEW_ORLEANS, MIAMI
+]
 
-class Card(BaseModel):
+
+class DisjointSets:
+    def __init__(self):
+        self.parent = list(range(len(ALL_CITIES)))
+
+    def find_root(self, city_id: int) -> int:
+        if self.parent[city_id] == city_id:
+            return city_id
+
+        self.parent[city_id] = self.find_root(self.parent[city_id])
+        return self.parent[city_id]
+
+    def connect(self, city1: City, city2: City) -> None:
+        self.parent[self.find_root(city1.id)] = self.find_root(city2.id)
+
+    def are_connected(self, city1: City, city2: City) -> bool:
+        return self.find_root(city1.id) == self.find_root(city2.id)
+
+
+@dataclass(frozen=True)
+class Card:
     color: Color
 
 
-class Route(BaseModel):
+@dataclass(frozen=True)
+class Route:
     id: int
     source_city: City
     destination_city: City
@@ -97,7 +143,7 @@ class Route(BaseModel):
         return ROUTE_LENGTHS_TO_VALUES[self.length]
 
 
-routes: list[Route] = [
+ROUTES: list[Route] = [
     Route(id=0, source_city=VANCOUVER, destination_city=CALGARY, color=ANY, length=3),
     Route(id=1, source_city=VANCOUVER, destination_city=SEATTLE, color=ANY, length=1),
     Route(id=2, source_city=VANCOUVER, destination_city=SEATTLE, color=ANY, length=1),
@@ -201,7 +247,16 @@ routes: list[Route] = [
 ]
 
 
-class Ticket(BaseModel):
+@dataclass(order=True)
+class RouteInfo:
+    route_id: int
+    player_id: int
+    color: Color
+    num_any_cards: int
+
+
+@dataclass(frozen=True)
+class Ticket:
     id: int
     source_city: City
     destination_city: City
@@ -242,31 +297,37 @@ TICKETS: list[Ticket] = [
 ]
 
 
-class TicketDeck(BaseModel):
+class TicketDeck:
     tickets: list[Ticket]
 
-    @classmethod
-    def init(cls) -> Self:
-        tickets = copy.deepcopy(TICKETS)
-        random.shuffle(tickets)
-        return cls(tickets=tickets)
+    def __init__(self) -> None:
+        self.tickets = copy.deepcopy(TICKETS)
+        random.shuffle(self.tickets)
 
     def get(self) -> list[Ticket]:
         assert len(self.tickets) >= 3
         return [self.tickets.pop() for _ in range(3)]
 
+    def __len__(self) -> int:
+        return len(self.tickets)
 
-class DiscardPile(BaseModel):
+
+@dataclass
+class DiscardPile:
     cards: list[Card] = Field(default_factory=list)
 
     def add(self, card: Card) -> None:
         self.cards.append(card)
 
+    def __len__(self) -> int:
+        return len(self.cards)
+
     def reset(self) -> None:
         self.cards = []
 
 
-class Deck(BaseModel):
+@dataclass
+class Deck:
     cards: list[Card]
 
     @classmethod
@@ -281,14 +342,227 @@ class Deck(BaseModel):
 
     @classmethod
     def from_discard_pile(cls, pile: DiscardPile) -> Self:
-        cards = pile.discard_cards
+        cards = pile.cards
         random.shuffle(cards)
         pile.reset()
         return cls(cards=cards)
 
-    def size(self) -> int:
+    def __len__(self) -> int:
         return len(self.cards)
 
     def get(self) -> Card:
         assert len(self.cards) > 0
         return self.cards.pop()
+
+
+class Board:
+    route_ownership: dict[int, RouteInfo]
+    ticket_deck: TicketDeck
+    card_deck: Deck
+    discard_pile: DiscardPile
+    visible_cards: list[Card]
+    train_cars: list[int]
+    # TODO(pauldb): Keep track of visible points.
+
+    def __init__(self, num_players: int) -> None:
+        self.route_ownership = {}
+        self.ticket_deck = TicketDeck()
+        self.card_deck = Deck()
+        self.discard_pile = DiscardPile()
+
+        # TODO(pauldb): Handle edge case where the initial cards have 3 or more locomotive cards.
+        self.visible_cards = [self.card_deck.get() for _ in range(NUM_VISIBLE_CARDS)]
+        self.train_cars = [NUM_INITIAL_TRAIN_CARS for _ in range(num_players)]
+
+
+# TODO(pauldb): Maybe rename to PlayerData or PlayerInfo?
+class Player:
+    id: int
+    card_counts: dict[Color, int] = Field(default_factory=dict)
+    tickets: list[Ticket] = Field(default_factory=list)
+
+    # TODO(pauldb): Keep track of points including hidden information known by this user.
+    def __init__(self, player_id: int):
+        self.id = player_id
+        self.card_counts = {}
+        self.tickets = []
+
+
+class ActionType(StrEnum):
+    DRAW_CARDS = "DRAW_CARDS"
+    BUILD_ROUTE = "BUILD_ROUTE"
+    DRAW_TICKETS = "DRAW_TICKETS"
+
+
+def get_build_route_options(board: Board, player: Player) -> list[RouteInfo]:
+    route_options: list[RouteInfo] = []
+    for route in ROUTES:
+        # This route has already been built, so it's not a valid option.
+        if route.id in board.route_ownership:
+            continue
+
+        # The route is too long for the number of train cars the player currently has left.
+        if route.length > board.train_cars[player.id]:
+            continue
+
+        # Check if we can use locomotive cards alone to build the route.
+        if ANY in player.card_counts and player.card_counts[ANY] >= route.length:
+            route_options.append(
+                RouteInfo(
+                    route_id=route.id,
+                    player_id=player.id,
+                    color=ANY,
+                    num_any_cards=route.length,
+                )
+            )
+
+        color_options = COLORS if route.color == ANY else [route.color]
+        for color in color_options:
+            if (
+                color in player.card_counts
+                and player.card_counts[color] + player.card_counts.get(ANY, 0) >= route.length
+            ):
+                route_options.append(
+                    RouteInfo(
+                        route_id=route.id,
+                        player_id=player.id,
+                        color=color,
+                        # Greedily first use cards of the given color, then use locomotives (ANY).
+                        num_any_cards=max(0, route.length - player.card_counts[color]),
+                    )
+                )
+
+    return route_options
+
+
+def get_valid_actions(board: Board, player: Player) -> list[ActionType]:
+    valid_action_types = []
+    if len(board.card_deck) + len(board.discard_pile) >= 2:
+        valid_action_types.append(ActionType.DRAW_CARDS)
+
+    if len(board.ticket_deck) >= 3:
+        valid_action_types.append(ActionType.DRAW_TICKETS)
+
+    build_route_options = get_build_route_options(board, player)
+    if len(build_route_options) > 0:
+        valid_action_types.append(ActionType.BUILD_ROUTE)
+
+    return valid_action_types
+
+
+class Policy:
+    @abc.abstractmethod
+    def choose_action(self, board: Board, player: Player) -> ActionType:
+        pass
+
+    @abc.abstractmethod
+    def choose_tickets(
+        self,
+        board: Board,
+        player: Player,
+        ticket_options: list[Ticket],
+        is_initial_turn: bool,
+    ) -> list[Ticket]:
+        pass
+
+    # Returning None means drawing from the deck.
+    @abc.abstractmethod
+    def draw_card(self, board: Board, player: Player, can_draw_any: bool) -> Card | None:
+        pass
+
+    @abc.abstractmethod
+    def build_route(self, board: Board, player: Player) -> RouteInfo:
+        pass
+
+
+class UniformRandomPolicy(Policy):
+    def choose_action(self, board: Board, player: Player) -> ActionType:
+        return random.choice(get_valid_actions(board=board, player=player))
+
+    def choose_tickets(
+        self,
+        board: Board,
+        player: Player,
+        ticket_options: list[Ticket],
+        is_initial_turn: bool,
+    ) -> list[Ticket]:
+        draw_options = [
+            ticket_options,
+            *itertools.combinations(ticket_options, 2),
+        ]
+        if not is_initial_turn:
+            draw_options.extend(itertools.combinations(draw_options, 1))
+            
+        return random.choice(draw_options)
+
+    def draw_card(self, board: Board, player: Player, can_draw_any: bool) -> Card | None:
+        card_options: set[Card | None] = {None}
+        for card in board.visible_cards:
+            if card.color != ANY or can_draw_any:
+                card_options.add(card)
+
+        return random.choice(list(card_options))
+
+    def build_route(self, board: Board, player: Player) -> RouteInfo:
+        route_options = get_build_route_options(board, player)
+        return random.choice(route_options)
+
+
+class Game:
+    board: Board
+    players: list[Player]
+    policies: list[Policy]
+
+    def __init__(self, policies: list[Policy]) -> None:
+        assert 2 <= len(policies) <= 5
+        self.policies = policies
+
+        self.board = Board(num_players=len(policies))
+        self.players = []
+
+        for player_id, policy in enumerate(policies):
+            player = Player(player_id=player_id)
+            for _ in range(NUM_INITIAL_PLAYER_CARDS):
+                card = self.board.card_deck.get()
+                player.card_counts[card.color] += 1
+                self.players.append(player)
+
+            player.tickets = policy.choose_tickets(
+                board=self.board,
+                player=player,
+                ticket_options=self.board.ticket_deck.get(),
+                is_initial_turn=True
+            )
+
+    def run(self) -> None:
+        final_player_id = None
+        player_id = 0
+        while True:
+            policy = self.policies[player_id]
+            player = self.players[player_id]
+
+            action_type = policy.choose_action(self.board, player)
+            if action_type == ActionType.DRAW_CARDS:
+                pass
+            elif action_type == ActionType.DRAW_TICKETS:
+                tickets = self.board.ticket_deck.get()
+                selected_tickets = policy.choose_tickets(
+                    board=self.board,
+                    player=player,
+                    ticket_options=tickets,
+                    is_initial_turn=False,
+                )
+                player.tickets.extend(selected_tickets)
+            elif action_type == ActionType.BUILD_ROUTE:
+                pass
+            else:
+                raise ValueError(f"Unknown action type: {action_type}")
+
+            if final_player_id is None:
+                if player_id == final_player_id:
+                    break
+            elif self.board.train_cars[player_id] <= NUM_LAST_TURN_CARS:
+                final_player_id = player_id
+
+            player_id = (player_id + 1) % len(self.players)
+
