@@ -9,6 +9,7 @@ from board_games.ticket2ride.consts import NUM_LAST_TURN_CARS, NUM_INITIAL_PLAYE
     ROUTES, NUM_VISIBLE_CARDS, NUM_INITIAL_TRAIN_CARS, COLORS, NUM_COLOR_CARDS, NUM_ANY_CARDS, \
     TICKETS
 from board_games.ticket2ride.data_models import Card, Ticket, Color, ActionType
+from board_games.ticket2ride.disjoint_sets import DisjointSets
 
 
 @dataclass(order=True)
@@ -104,10 +105,15 @@ class Player:
     tickets: list[Ticket]
 
     # TODO(pauldb): Keep track of points including hidden information known by this user.
-    def __init__(self, player_id: int, card_counts: dict[Color, int] | None = None) -> None:
+    def __init__(
+        self,
+        player_id: int,
+        card_counts: dict[Color, int] | None = None,
+        tickets: list[Ticket] | None = None,
+    ) -> None:
         self.id = player_id
         self.card_counts = card_counts or {}
-        self.tickets = []
+        self.tickets = tickets or []
 
 
 def get_build_route_options(board: Board, player: Player) -> list[RouteInfo]:
@@ -151,6 +157,22 @@ def get_build_route_options(board: Board, player: Player) -> list[RouteInfo]:
     return route_options
 
 
+def count_ticket_points(board: Board, player: Player) -> int:
+    disjoint_sets = DisjointSets()
+    for route_info in board.route_ownership.values():
+        route = ROUTES[route_info.route_id]
+        disjoint_sets.connect(route.source_city, route.destination_city)
+
+    points = 0
+    for ticket in player.tickets:
+        if disjoint_sets.are_connected(ticket.source_city, ticket.destination_city):
+            points += ticket.value
+        else:
+            points -= ticket.value
+
+    return points
+
+
 def get_valid_actions(board: Board, player: Player) -> list[ActionType]:
     valid_action_types = []
     if len(board.card_deck) + len(board.discard_pile) >= 2:
@@ -173,11 +195,11 @@ class Policy:
 
     @abc.abstractmethod
     def choose_tickets(
-            self,
-            board: Board,
-            player: Player,
-            ticket_options: list[Ticket],
-            is_initial_turn: bool,
+        self,
+        board: Board,
+        player: Player,
+        ticket_options: list[Ticket],
+        is_initial_turn: bool,
     ) -> list[Ticket]:
         pass
 
@@ -196,11 +218,11 @@ class UniformRandomPolicy(Policy):
         return random.choice(get_valid_actions(board=board, player=player))
 
     def choose_tickets(
-            self,
-            board: Board,
-            player: Player,
-            ticket_options: list[Ticket],
-            is_initial_turn: bool,
+        self,
+        board: Board,
+        player: Player,
+        ticket_options: list[Ticket],
+        is_initial_turn: bool,
     ) -> list[Ticket]:
         draw_options = [
             ticket_options,
