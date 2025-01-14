@@ -2,10 +2,8 @@ from typing import Callable
 
 import pytest
 
-from board_games.ticket2ride.data_models import (
-    Board, Player, ANY, WHITE, RED, RouteInfo, get_build_route_options, BLUE, BLACK, DisjointSets,
-    HELENA, SEATTLE, LOS_ANGELES, PHOENIX, DENVER
-)
+from board_games.ticket2ride.consts import ANY, WHITE, RED, BLUE, BLACK
+from board_games.ticket2ride.logic import Board, Player, RouteInfo, get_build_route_options
 
 
 @pytest.fixture()
@@ -19,8 +17,8 @@ def assert_array_equal() -> Callable[[list, list], None]:
 def test_get_build_route_options(
     assert_array_equal: Callable[[list, list], None],
 ) -> None:
-    board = Board.init(num_players=2)
-    player = Player(id=0, card_counts={ANY: 1, WHITE: 4, RED: 1})
+    board = Board(num_players=2)
+    player = Player(player_id=0, card_counts={ANY: 1, WHITE: 4, RED: 1})
     board.train_cars[player.id] = 3
     board.route_ownership = {
         1: RouteInfo(route_id=1, player_id=0, color=BLUE, num_any_cards=0),
@@ -122,18 +120,3 @@ def test_get_build_route_options(
     assert_array_equal(expected_options, options)
 
 
-def test_disjoint_sets() -> None:
-    disjoint_sets = DisjointSets()
-
-    assert not disjoint_sets.are_connected(SEATTLE, HELENA)
-
-    disjoint_sets.connect(SEATTLE, HELENA)
-    assert disjoint_sets.are_connected(SEATTLE, HELENA)
-
-    assert not disjoint_sets.are_connected(LOS_ANGELES, SEATTLE)
-    disjoint_sets.connect(LOS_ANGELES, PHOENIX)
-    assert not disjoint_sets.are_connected(LOS_ANGELES, SEATTLE)
-    disjoint_sets.connect(HELENA, DENVER)
-    assert not disjoint_sets.are_connected(LOS_ANGELES, SEATTLE)
-    disjoint_sets.connect(DENVER, PHOENIX)
-    assert disjoint_sets.are_connected(LOS_ANGELES, SEATTLE)
