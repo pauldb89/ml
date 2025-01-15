@@ -7,9 +7,6 @@ class Color:
     id: int
     name: str
 
-    def __hash__(self) -> int:
-        return self.id
-
     def __repr__(self) -> str:
         return f"{self.name}"
 
@@ -26,9 +23,6 @@ class Card:
 
     def __repr__(self) -> str:
         return f"{self.color.name}"
-
-    def __hash__(self) -> int:
-        return hash(self.color)
 
 
 ROUTE_LENGTHS_TO_VALUES: dict[int, int] = {

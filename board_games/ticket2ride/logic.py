@@ -14,6 +14,10 @@ from board_games.ticket2ride.disjoint_sets import DisjointSets
 from board_games.ticket2ride.longest_path import find_longest_path
 
 
+class InvalidGameStateError(Exception):
+    pass
+
+
 class TicketDeck:
     tickets: list[Ticket]
 
@@ -55,6 +59,10 @@ class CardDeck:
     def discard(self, card: Card) -> None:
         self.discard_pile.append(card)
 
+    @property
+    def remaining_regular_cards(self) -> int:
+        return len([card for card in self.deck + self.discard_pile if card.color != ANY])
+
     def __len__(self) -> int:
         return len(self.deck) + len(self.discard_pile)
 
@@ -83,8 +91,16 @@ class Board:
         self.reveal_cards()
 
     def reveal_cards(self) -> None:
+        remaining_regular_cards = self.card_deck.remaining_regular_cards
+        for card in self.visible_cards:
+            if card.color != ANY:
+                remaining_regular_cards += 1
+
+        if remaining_regular_cards < NUM_VISIBLE_CARDS - MAX_VISIBLE_ANY_CARDS:
+            raise InvalidGameStateError("Insufficient regular cards left")
+
         while True:
-            while len(self.visible_cards) < NUM_VISIBLE_CARDS:
+            while len(self.card_deck) > 0 and len(self.visible_cards) < NUM_VISIBLE_CARDS:
                 self.visible_cards.append(self.card_deck.draw())
 
             num_visible_any_cards = 0
@@ -177,7 +193,7 @@ def count_ticket_points(board: Board, player: Player) -> int:
 
 def get_valid_actions(board: Board, player: Player) -> list[ActionType]:
     valid_action_types = []
-    if len(board.card_deck) >= 2:
+    if len(board.card_deck) + len(board.visible_cards) >= 2:
         valid_action_types.append(ActionType.DRAW_CARDS)
 
     if len(board.ticket_deck) >= 3:
@@ -236,12 +252,20 @@ class UniformRandomPolicy(Policy):
         return random.choice(draw_options)
 
     def draw_card(self, board: Board, player: Player, can_draw_any: bool) -> Card | None:
-        card_options: set[Card | None] = {None}
-        for card in board.visible_cards:
-            if card.color != ANY or can_draw_any:
-                card_options.add(card)
+        card_options: list[Card | None] = []
+        if len(board.card_deck) >= 1:
+            card_options.append(None)
 
-        return random.choice(list(card_options))
+        for card in board.visible_cards:
+            if card in card_options:
+                continue
+
+            if card.color == ANY and not can_draw_any:
+                continue
+
+            card_options.append(card)
+
+        return random.choice(card_options)
 
     def build_route(self, board: Board, player: Player) -> RouteInfo:
         route_options = get_build_route_options(board, player)
