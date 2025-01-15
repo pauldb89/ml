@@ -7,6 +7,12 @@ class Color:
     id: int
     name: str
 
+    def __hash__(self) -> int:
+        return self.id
+
+    def __repr__(self) -> str:
+        return f"{self.name}"
+
 
 @dataclass(frozen=True)
 class City:
@@ -17,6 +23,12 @@ class City:
 @dataclass(frozen=True)
 class Card:
     color: Color
+
+    def __repr__(self) -> str:
+        return f"{self.color.name}"
+
+    def __hash__(self) -> int:
+        return hash(self.color)
 
 
 ROUTE_LENGTHS_TO_VALUES: dict[int, int] = {
@@ -45,6 +57,14 @@ class Route:
         return ROUTE_LENGTHS_TO_VALUES[self.length]
 
 
+@dataclass(order=True)
+class RouteInfo:
+    route_id: int
+    player_id: int
+    color: Color
+    num_any_cards: int
+
+
 @dataclass(frozen=True)
 class Ticket:
     id: int
@@ -57,3 +77,24 @@ class ActionType(StrEnum):
     DRAW_CARDS = "DRAW_CARDS"
     BUILD_ROUTE = "BUILD_ROUTE"
     DRAW_TICKETS = "DRAW_TICKETS"
+
+
+@dataclass(frozen=True)
+class Action:
+    player_id: int
+    action_type: ActionType
+
+
+@dataclass(frozen=True)
+class DrawCards(Action):
+    cards: list[Card | None]
+
+
+@dataclass(frozen=True)
+class DrawTickets(Action):
+    tickets: list[Ticket]
+
+
+@dataclass(frozen=True)
+class BuildRoute(Action):
+    route_info: RouteInfo

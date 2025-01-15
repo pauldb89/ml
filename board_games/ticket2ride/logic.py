@@ -2,21 +2,16 @@ import abc
 import copy
 import itertools
 import random
+from collections import defaultdict
 from dataclasses import dataclass
 
 from board_games.ticket2ride.consts import NUM_LAST_TURN_CARS, NUM_INITIAL_PLAYER_CARDS, ANY, \
     ROUTES, NUM_VISIBLE_CARDS, NUM_INITIAL_TRAIN_CARS, COLORS, NUM_COLOR_CARDS, NUM_ANY_CARDS, \
-    TICKETS, MAX_VISIBLE_ANY_CARDS
-from board_games.ticket2ride.data_models import Card, Ticket, Color, ActionType
+    TICKETS, MAX_VISIBLE_ANY_CARDS, LONGEST_PATH_POINTS
+from board_games.ticket2ride.data_models import Card, Ticket, Color, ActionType, Action, DrawCards, \
+    DrawTickets, BuildRoute, RouteInfo
 from board_games.ticket2ride.disjoint_sets import DisjointSets
-
-
-@dataclass(order=True)
-class RouteInfo:
-    route_id: int
-    player_id: int
-    color: Color
-    num_any_cards: int
+from board_games.ticket2ride.longest_path import find_longest_path
 
 
 class TicketDeck:
@@ -62,6 +57,9 @@ class CardDeck:
 
     def __len__(self) -> int:
         return len(self.deck) + len(self.discard_pile)
+
+    def __str__(self) -> str:
+        return f"CardDeck(deck={self.deck}, discard_pile={self.discard_pile})"
 
 
 class Board:
@@ -116,7 +114,7 @@ class Player:
         tickets: list[Ticket] | None = None,
     ) -> None:
         self.id = player_id
-        self.card_counts = card_counts or {}
+        self.card_counts = card_counts or defaultdict(int)
         self.tickets = tickets or []
 
 
@@ -233,7 +231,7 @@ class UniformRandomPolicy(Policy):
             *itertools.combinations(ticket_options, 2),
         ]
         if not is_initial_turn:
-            draw_options.extend(itertools.combinations(draw_options, 1))
+            draw_options.extend(itertools.combinations(ticket_options, 1))
 
         return random.choice(draw_options)
 
@@ -250,14 +248,24 @@ class UniformRandomPolicy(Policy):
         return random.choice(route_options)
 
 
+@dataclass
+class GameStats:
+    route_points: list[int]
+    ticket_points: list[int]
+    longest_path_points: list[int]
+    total_points: list[int]
+
+
 class Game:
     board: Board
     players: list[Player]
     policies: list[Policy]
+    action_log: list[Action]
 
     def __init__(self, policies: list[Policy]) -> None:
         assert 2 <= len(policies) <= 5
         self.policies = policies
+        self.action_log = []
 
         self.board = Board(num_players=len(policies))
         self.players = []
@@ -267,7 +275,6 @@ class Game:
             for _ in range(NUM_INITIAL_PLAYER_CARDS):
                 card = self.board.card_deck.draw()
                 player.card_counts[card.color] += 1
-                self.players.append(player)
 
             player.tickets = policy.choose_tickets(
                 board=self.board,
@@ -275,8 +282,9 @@ class Game:
                 ticket_options=self.board.ticket_deck.get(),
                 is_initial_turn=True
             )
+            self.players.append(player)
 
-    def run(self) -> None:
+    def run(self) -> GameStats:
         final_player_id = None
         player_id = 0
         while True:
@@ -285,8 +293,10 @@ class Game:
 
             action_type = policy.choose_action(self.board, player)
             if action_type == ActionType.DRAW_CARDS:
+                drawn_cards = []
                 for can_draw_any in [True, False]:
                     card = policy.draw_card(self.board, player, can_draw_any=can_draw_any)
+                    drawn_cards.append(card)
 
                     if card is None:
                         card = self.board.card_deck.draw()
@@ -298,6 +308,14 @@ class Game:
 
                         if card.color == ANY:
                             break
+
+                self.action_log.append(
+                    DrawCards(
+                        player_id=player_id,
+                        action_type=action_type,
+                        cards=drawn_cards,
+                    )
+                )
             elif action_type == ActionType.DRAW_TICKETS:
                 tickets = self.board.ticket_deck.get()
                 selected_tickets = policy.choose_tickets(
@@ -307,6 +325,13 @@ class Game:
                     is_initial_turn=False,
                 )
                 player.tickets.extend(selected_tickets)
+                self.action_log.append(
+                    DrawTickets(
+                        player_id=player_id,
+                        action_type=action_type,
+                        tickets=selected_tickets,
+                    )
+                )
             elif action_type == ActionType.BUILD_ROUTE:
                 route_info = policy.build_route(self.board, player)
 
@@ -327,10 +352,18 @@ class Game:
                 self.board.train_cars[player.id] -= route.length
 
                 self.board.route_points[player.id] += route.value
+
+                self.action_log.append(
+                    BuildRoute(
+                        player_id=player_id,
+                        action_type=action_type,
+                        route_info=route_info,
+                    )
+                )
             else:
                 raise ValueError(f"Unknown action type: {action_type}")
 
-            if final_player_id is None:
+            if final_player_id is not None:
                 if player_id == final_player_id:
                     break
             elif self.board.train_cars[player_id] <= NUM_LAST_TURN_CARS:
@@ -338,3 +371,38 @@ class Game:
 
             player_id = (player_id + 1) % len(self.players)
 
+        return self.compute_game_stats()
+
+    def compute_game_stats(self) -> GameStats:
+        longest_paths = []
+        for player in self.players:
+            routes = []
+            for route_info in self.board.route_ownership.values():
+                if route_info.player_id == player.id:
+                    routes.append(ROUTES[route_info.route_id])
+
+            longest_paths.append(find_longest_path(routes))
+
+        max_path_length = max(longest_paths)
+        route_points = []
+        ticket_points = []
+        longest_path_points = []
+        for player in self.players:
+            route_points.append(self.board.route_points[player.id])
+            ticket_points.append(count_ticket_points(board=self.board, player=player))
+            longest_path_points.append(
+                LONGEST_PATH_POINTS if max_path_length == longest_paths[player.id] else 0
+            )
+
+        total_points = []
+        for player_id in range(len(self.players)):
+            total_points.append(
+                route_points[player_id] + ticket_points[player_id] + longest_path_points[player_id]
+            )
+
+        return GameStats(
+            route_points=route_points,
+            ticket_points=ticket_points,
+            longest_path_points=longest_path_points,
+            total_points=total_points,
+        )

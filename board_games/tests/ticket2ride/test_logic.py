@@ -3,7 +3,8 @@ from typing import Callable
 import pytest
 
 from board_games.ticket2ride.consts import ANY, WHITE, RED, BLUE, BLACK, GREEN, TICKETS
-from board_games.ticket2ride.logic import Board, Player, RouteInfo, get_build_route_options, \
+from board_games.ticket2ride.data_models import RouteInfo
+from board_games.ticket2ride.logic import Board, Player, get_build_route_options, \
     count_ticket_points
 
 
