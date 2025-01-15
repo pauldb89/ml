@@ -1,6 +1,7 @@
 import random
 
-from board_games.ticket2ride.logic import Game, UniformRandomPolicy
+from board_games.ticket2ride.game_logic import Game
+from board_games.ticket2ride.policies import UniformRandomPolicy
 
 
 def test_determinism() -> None:
