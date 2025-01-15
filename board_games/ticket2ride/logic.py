@@ -78,7 +78,6 @@ class Board:
     route_points: list[int]
     visible_cards: list[Card]
 
-    # TODO(pauldb): Keep track of visible points.
     def __init__(self, num_players: int) -> None:
         self.route_ownership = {}
         self.ticket_deck = TicketDeck()
@@ -116,13 +115,11 @@ class Board:
                 break
 
 
-# TODO(pauldb): Maybe rename to PlayerData or PlayerInfo?
 class Player:
     id: int
     card_counts: dict[Color, int]
     tickets: list[Ticket]
 
-    # TODO(pauldb): Keep track of points including hidden information known by this user.
     def __init__(
         self,
         player_id: int,
