@@ -4,6 +4,10 @@ load("//tools/pytest:defs.bzl", "pytest_test")
 py_library(
     name = "board_games",
     srcs = glob(["**/*.py"], exclude = ["tests/**"]),
+    deps = [
+        "@pypi//tabulate",
+        "@pypi//termcolor",
+    ]
 )
 
 pytest_test(

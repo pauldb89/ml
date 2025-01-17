@@ -5,8 +5,9 @@ from dataclasses import dataclass
 
 from board_games.ticket2ride import consts
 from board_games.ticket2ride.consts import MAX_VISIBLE_ANY_CARDS, ANY, NUM_VISIBLE_CARDS, \
-    NUM_INITIAL_TRAIN_CARS, COLORS, NUM_COLOR_CARDS, NUM_ANY_CARDS, TICKETS
+    NUM_INITIAL_TRAIN_CARS, COLORS, NUM_COLOR_CARDS, NUM_ANY_CARDS, TICKETS, ROUTES
 from board_games.ticket2ride.data_models import Color, Ticket, Card, RouteInfo
+from board_games.ticket2ride.disjoint_sets import DisjointSets
 
 
 class InvalidGameStateError(Exception):
@@ -72,8 +73,11 @@ class Board:
     train_cars: list[int]
     route_points: list[int]
     visible_cards: list[Card]
+    num_players: int
 
     def __init__(self, num_players: int) -> None:
+        self.num_players = num_players
+
         self.route_ownership = {}
         self.ticket_deck = TicketDeck()
         self.card_deck = CardDeck()
@@ -124,3 +128,23 @@ class Player:
         self.id = player_id
         self.card_counts = card_counts or defaultdict(int)
         self.tickets = tickets or []
+
+
+def check_tickets(board: Board, player: Player) -> list[bool]:
+    disjoint_sets = DisjointSets()
+    for route_info in board.route_ownership.values():
+        route = ROUTES[route_info.route_id]
+        disjoint_sets.connect(route.source_city, route.destination_city)
+
+    connected = []
+    for ticket in player.tickets:
+        connected.append(disjoint_sets.are_connected(ticket.source_city, ticket.destination_city))
+    return connected
+
+
+def count_ticket_points(board: Board, player: Player) -> int:
+    points = 0
+    connected = check_tickets(board, player)
+    for ticket, ticket_status in zip(player.tickets, connected):
+        points += ticket.value if ticket_status else -ticket.value
+    return points

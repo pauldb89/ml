@@ -9,7 +9,8 @@ NUM_LAST_TURN_CARS = 2
 MAX_VISIBLE_ANY_CARDS = 2
 LONGEST_PATH_POINTS = 10
 
-PURPLE = Color(id=0, name="purple")
+# PINK = Color(id=0, name="PINK")
+PINK = Color(id=0, name="pink")
 WHITE = Color(id=1, name="white")
 BLUE = Color(id=2, name="blue")
 YELLOW = Color(id=3, name="yellow")
@@ -20,7 +21,7 @@ GREEN = Color(id=7, name="green")
 ANY = Color(id=8, name="any")
 
 COLORS = [
-    PURPLE,
+    PINK,
     WHITE,
     BLUE,
     YELLOW,
@@ -95,19 +96,19 @@ ROUTES: list[Route] = [
     Route(id=16, source_city=SEATTLE, destination_city=PORTLAND, color=ANY, length=1),
     Route(id=17, source_city=SEATTLE, destination_city=HELENA, color=YELLOW, length=6),
     Route(id=18, source_city=TORONTO, destination_city=PITTSBURGH, color=ANY, length=2),
-    Route(id=19, source_city=TORONTO, destination_city=DULUTH, color=PURPLE, length=6),
+    Route(id=19, source_city=TORONTO, destination_city=DULUTH, color=PINK, length=6),
     Route(id=20, source_city=TORONTO, destination_city=CHICAGO, color=WHITE, length=4),
     Route(id=21, source_city=BOSTON, destination_city=NEW_YORK, color=YELLOW, length=2),
     Route(id=22, source_city=BOSTON, destination_city=NEW_YORK, color=RED, length=2),
     Route(id=23, source_city=PORTLAND, destination_city=SAN_FRANCISCO, color=GREEN, length=5),
-    Route(id=24, source_city=PORTLAND, destination_city=SAN_FRANCISCO, color=PURPLE, length=5),
+    Route(id=24, source_city=PORTLAND, destination_city=SAN_FRANCISCO, color=PINK, length=5),
     Route(id=25, source_city=SAN_FRANCISCO, destination_city=SALT_LAKE_CITY, color=ORANGE, length=5),
     Route(id=26, source_city=SAN_FRANCISCO, destination_city=SALT_LAKE_CITY, color=WHITE, length=5),
     Route(id=27, source_city=PORTLAND, destination_city=SALT_LAKE_CITY, color=BLUE, length=6),
     Route(id=28, source_city=HELENA, destination_city=DULUTH, color=ORANGE, length=6),
     Route(id=29, source_city=HELENA, destination_city=OMAHA, color=RED, length=5),
     Route(id=30, source_city=HELENA, destination_city=DENVER, color=GREEN, length=4),
-    Route(id=31, source_city=HELENA, destination_city=SALT_LAKE_CITY, color=PURPLE, length=3),
+    Route(id=31, source_city=HELENA, destination_city=SALT_LAKE_CITY, color=PINK, length=3),
     Route(id=32, source_city=DULUTH, destination_city=OMAHA, color=ANY, length=2),
     Route(id=33, source_city=DULUTH, destination_city=OMAHA, color=ANY, length=2),
     Route(id=34, source_city=DULUTH, destination_city=CHICAGO, color=RED, length=3),
@@ -125,7 +126,7 @@ ROUTES: list[Route] = [
     Route(id=46, source_city=PITTSBURGH, destination_city=RALEIGH, color=ANY, length=2),
     Route(id=47, source_city=OMAHA, destination_city=KANSAS_CITY, color=ANY, length=1),
     Route(id=48, source_city=OMAHA, destination_city=KANSAS_CITY, color=ANY, length=1),
-    Route(id=49, source_city=OMAHA, destination_city=DENVER, color=PURPLE, length=4),
+    Route(id=49, source_city=OMAHA, destination_city=DENVER, color=PINK, length=4),
     Route(id=50, source_city=WASHINGTON, destination_city=PITTSBURGH, color=ANY, length=2),
     Route(id=51, source_city=WASHINGTON, destination_city=RALEIGH, color=ANY, length=2),
     Route(id=52, source_city=DENVER, destination_city=KANSAS_CITY, color=BLACK, length=4),
@@ -138,7 +139,7 @@ ROUTES: list[Route] = [
     Route(id=59, source_city=KANSAS_CITY, destination_city=OKLAHOMA_CITY, color=ANY, length=2),
     Route(id=60, source_city=KANSAS_CITY, destination_city=OKLAHOMA_CITY, color=ANY, length=2),
     Route(id=61, source_city=KANSAS_CITY, destination_city=SAINT_LOUIS, color=BLUE, length=2),
-    Route(id=62, source_city=KANSAS_CITY, destination_city=SAINT_LOUIS, color=PURPLE, length=2),
+    Route(id=62, source_city=KANSAS_CITY, destination_city=SAINT_LOUIS, color=PINK, length=2),
     Route(id=63, source_city=SAINT_LOUIS, destination_city=LITTLE_ROCK, color=ANY, length=2),
     Route(id=64, source_city=SAINT_LOUIS, destination_city=NASHVILLE, color=ANY, length=2),
     Route(id=65, source_city=NASHVILLE, destination_city=RALEIGH, color=BLACK, length=3),
@@ -146,7 +147,7 @@ ROUTES: list[Route] = [
     Route(id=67, source_city=RALEIGH, destination_city=ATLANTA, color=ANY, length=2),
     Route(id=68, source_city=RALEIGH, destination_city=CHARLESTON, color=ANY, length=2),
     Route(id=69, source_city=SAN_FRANCISCO, destination_city=LOS_ANGELES, color=YELLOW, length=3),
-    Route(id=70, source_city=SAN_FRANCISCO, destination_city=LOS_ANGELES, color=PURPLE, length=3),
+    Route(id=70, source_city=SAN_FRANCISCO, destination_city=LOS_ANGELES, color=PINK, length=3),
     Route(id=71, source_city=LAS_VEGAS, destination_city=LOS_ANGELES, color=ANY, length=2),
     Route(id=72, source_city=SANTA_FE, destination_city=EL_PASO, color=ANY, length=2),
     Route(id=73, source_city=OKLAHOMA_CITY, destination_city=EL_PASO, color=YELLOW, length=5),
@@ -160,7 +161,7 @@ ROUTES: list[Route] = [
     Route(id=81, source_city=ATLANTA, destination_city=NEW_ORLEANS, color=YELLOW, length=4),
     Route(id=82, source_city=ATLANTA, destination_city=NEW_ORLEANS, color=ORANGE, length=4),
     Route(id=83, source_city=ATLANTA, destination_city=MIAMI, color=BLUE, length=5),
-    Route(id=84, source_city=CHARLESTON, destination_city=MIAMI, color=PURPLE, length=4),
+    Route(id=84, source_city=CHARLESTON, destination_city=MIAMI, color=PINK, length=4),
     Route(id=85, source_city=LOS_ANGELES, destination_city=PHOENIX, color=ANY, length=3),
     Route(id=86, source_city=LOS_ANGELES, destination_city=EL_PASO, color=BLACK, length=6),
     Route(id=87, source_city=PHOENIX, destination_city=EL_PASO, color=ANY, length=3),

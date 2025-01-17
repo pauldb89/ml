@@ -1,29 +1,12 @@
 from dataclasses import dataclass
 
-from board_games.ticket2ride.board_logic import Player, Board
-from board_games.ticket2ride.consts import LONGEST_PATH_POINTS, ROUTES, NUM_LAST_TURN_CARS, ANY, \
+from board_games.ticket2ride.board_logic import Player, Board, count_ticket_points
+from board_games.ticket2ride.consts import ROUTES, NUM_LAST_TURN_CARS, ANY, \
     NUM_INITIAL_PLAYER_CARDS
 from board_games.ticket2ride.data_models import Card, DrawTickets, ActionType, DrawCards, Action, \
     BuildRoute
-from board_games.ticket2ride.disjoint_sets import DisjointSets
-from board_games.ticket2ride.longest_path import find_longest_path
+from board_games.ticket2ride.longest_path import find_longest_paths
 from board_games.ticket2ride.policies import Policy
-
-
-def count_ticket_points(board: Board, player: Player) -> int:
-    disjoint_sets = DisjointSets()
-    for route_info in board.route_ownership.values():
-        route = ROUTES[route_info.route_id]
-        disjoint_sets.connect(route.source_city, route.destination_city)
-
-    points = 0
-    for ticket in player.tickets:
-        if disjoint_sets.are_connected(ticket.source_city, ticket.destination_city):
-            points += ticket.value
-        else:
-            points -= ticket.value
-
-    return points
 
 
 @dataclass
@@ -152,35 +135,22 @@ class Game:
         return self.compute_game_stats()
 
     def compute_game_stats(self) -> GameStats:
-        longest_paths = []
-        for player in self.players:
-            routes = []
-            for route_info in self.board.route_ownership.values():
-                if route_info.player_id == player.id:
-                    routes.append(ROUTES[route_info.route_id])
-
-            longest_paths.append(find_longest_path(routes))
-
-        max_path_length = max(longest_paths)
+        longest_paths = find_longest_paths(self.board)
         route_points = []
         ticket_points = []
-        longest_path_points = []
         for player in self.players:
             route_points.append(self.board.route_points[player.id])
             ticket_points.append(count_ticket_points(board=self.board, player=player))
-            longest_path_points.append(
-                LONGEST_PATH_POINTS if max_path_length == longest_paths[player.id] else 0
-            )
 
         total_points = []
         for player_id in range(len(self.players)):
             total_points.append(
-                route_points[player_id] + ticket_points[player_id] + longest_path_points[player_id]
+                route_points[player_id] + ticket_points[player_id] + longest_paths.points[player_id]
             )
 
         return GameStats(
             route_points=route_points,
             ticket_points=ticket_points,
-            longest_path_points=longest_path_points,
+            longest_path_points=longest_paths.points,
             total_points=total_points,
         )

@@ -2,10 +2,9 @@ from typing import Callable
 
 import pytest
 
-from board_games.ticket2ride.board_logic import Board, Player
+from board_games.ticket2ride.board_logic import Board, Player, count_ticket_points
 from board_games.ticket2ride.consts import ANY, WHITE, RED, BLUE, BLACK, GREEN, TICKETS
 from board_games.ticket2ride.data_models import RouteInfo
-from board_games.ticket2ride.game_logic import count_ticket_points
 
 
 @pytest.fixture()
