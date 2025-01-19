@@ -6,8 +6,21 @@ from dataclasses import dataclass
 from board_games.ticket2ride import consts
 from board_games.ticket2ride.consts import MAX_VISIBLE_ANY_CARDS, ANY, NUM_VISIBLE_CARDS, \
     NUM_INITIAL_TRAIN_CARS, COLORS, NUM_COLOR_CARDS, NUM_ANY_CARDS, TICKETS, ROUTES
-from board_games.ticket2ride.data_models import Color, Ticket, Card, RouteInfo
+from board_games.ticket2ride.data_models import Color, Ticket, Card, DrawnTickets, \
+    Tickets
 from board_games.ticket2ride.disjoint_sets import DisjointSets
+
+
+@dataclass(order=True)
+class RouteInfo:
+    route_id: int
+    player_id: int
+    color: Color
+    num_any_cards: int
+
+    def __repr__(self) -> str:
+        route = ROUTES[self.route_id]
+        return f"{route} with {self.color} cards and {self.num_any_cards} additional {ANY} cards"
 
 
 class InvalidGameStateError(Exception):
@@ -21,9 +34,9 @@ class TicketDeck:
         self.tickets = copy.deepcopy(TICKETS)
         random.shuffle(self.tickets)
 
-    def get(self) -> list[Ticket]:
+    def get(self) -> DrawnTickets:
         assert len(self.tickets) >= 3
-        return [self.tickets.pop() for _ in range(3)]
+        return tuple(self.tickets.pop() for _ in range(3))
 
     def __len__(self) -> int:
         return len(self.tickets)
@@ -123,7 +136,7 @@ class Player:
         self,
         player_id: int,
         card_counts: dict[Color, int] | None = None,
-        tickets: list[Ticket] | None = None,
+        tickets: Tickets | None = None,
     ) -> None:
         self.id = player_id
         self.card_counts = card_counts or defaultdict(int)

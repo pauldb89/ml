@@ -2,9 +2,8 @@ from typing import Callable
 
 import pytest
 
-from board_games.ticket2ride.board_logic import Board, Player
+from board_games.ticket2ride.board_logic import Board, Player, RouteInfo
 from board_games.ticket2ride.consts import ANY, WHITE, RED, BLUE, BLACK
-from board_games.ticket2ride.data_models import RouteInfo
 from board_games.ticket2ride.policy_helpers import get_build_route_options
 
 

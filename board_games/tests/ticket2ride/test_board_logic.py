@@ -2,9 +2,8 @@ from typing import Callable
 
 import pytest
 
-from board_games.ticket2ride.board_logic import Board, Player, count_ticket_points
+from board_games.ticket2ride.board_logic import Board, Player, count_ticket_points, RouteInfo
 from board_games.ticket2ride.consts import ANY, WHITE, RED, BLUE, BLACK, GREEN, TICKETS
-from board_games.ticket2ride.data_models import RouteInfo
 
 
 @pytest.fixture()
@@ -27,9 +26,9 @@ def test_count_ticket_points() -> None:
         56: RouteInfo(route_id=56, player_id=1, color=BLUE, num_any_cards=0),
         72: RouteInfo(route_id=72, player_id=0, color=BLACK, num_any_cards=1),
     }
-    player1 = Player(player_id=0, tickets=[TICKETS[25], TICKETS[26], TICKETS[29]])
-    player2 = Player(player_id=1, tickets=[TICKETS[0], TICKETS[15]])
-    player3 = Player(player_id=2, tickets=[TICKETS[9]])
+    player1 = Player(player_id=0, tickets=(TICKETS[25], TICKETS[26], TICKETS[29]))
+    player2 = Player(player_id=1, tickets=(TICKETS[0], TICKETS[15]))
+    player3 = Player(player_id=2, tickets=(TICKETS[9],))
 
     assert count_ticket_points(board=board, player=player1) == 25
     assert count_ticket_points(board=board, player=player2) == -7

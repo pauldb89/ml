@@ -1,15 +1,60 @@
 import itertools
 from collections import defaultdict
+from dataclasses import dataclass
+from enum import StrEnum
 from typing import TypeVar
 
 from tabulate import tabulate
 from termcolor import colored
 
-from board_games.ticket2ride.board_logic import Board, Player, check_tickets
-from board_games.ticket2ride.consts import ROUTES, ANY, COLORS, RED, WHITE, BLUE, YELLOW, \
-    ORANGE, BLACK, GREEN, PINK
-from board_games.ticket2ride.data_models import RouteInfo, ActionType, Color, Card, Ticket
+from board_games.ticket2ride.board_logic import Board, Player, check_tickets, RouteInfo
+from board_games.ticket2ride.consts import ROUTES, ANY, COLORS
+from board_games.ticket2ride.data_models import Card, Ticket, DrawnTickets, Tickets, render_cards
 from board_games.ticket2ride.longest_path import find_longest_paths
+
+
+class ActionType(StrEnum):
+    DRAW_CARDS = "DRAW_CARDS"
+    BUILD_ROUTE = "BUILD_ROUTE"
+    DRAW_TICKETS = "DRAW_TICKETS"
+
+
+@dataclass(frozen=True)
+class Action:
+    player_id: int
+    action_type: ActionType
+
+
+@dataclass(frozen=True)
+class DrawCards(Action):
+    cards: list[Card | None]
+
+    def __repr__(self) -> str:
+        text_parts = []
+        for card in self.cards:
+            if card is None:
+                text_parts.append("card from deck")
+            else:
+                text_parts.append(repr(card))
+
+        text = " and ".join(text_parts)
+        return f"Player {self.player_id} drew cards: {text}"
+
+
+@dataclass(frozen=True)
+class DrawTickets(Action):
+    tickets: Tickets
+
+    def __repr__(self) -> str:
+        return f"Player {self.player_id} drew {len(self.tickets)} tickets"
+
+
+@dataclass(frozen=True)
+class BuildRoute(Action):
+    route_info: RouteInfo
+
+    def __repr__(self) -> str:
+        return f"Player {self.player_id} built {self.route_info}"
 
 
 def get_build_route_options(board: Board, player: Player) -> list[RouteInfo]:
@@ -70,7 +115,7 @@ def get_valid_actions(board: Board, player: Player) -> list[ActionType]:
 
 
 # TODO(pauldb): Unit test.
-def get_ticket_draw_options(tickets: list[Ticket], is_initial_turn: bool) -> list[list[Ticket]]:
+def get_ticket_draw_options(tickets: DrawnTickets, is_initial_turn: bool) -> list[Tickets]:
     draw_options = [tickets, *itertools.combinations(tickets, 2)]
     if not is_initial_turn:
         draw_options.extend(itertools.combinations(tickets, 1))
@@ -95,29 +140,6 @@ def get_draw_card_options(board: Board, can_draw_any: bool) -> list[Card | None]
     return card_options
 
 
-def render_color(color: Color) -> str:
-    color_map: dict[Color, str] = {
-        PINK: "light_magenta",
-        WHITE: "white",
-        BLUE: "blue",
-        YELLOW: "yellow",
-        ORANGE: "light_red",
-        BLACK: "black",
-        RED: "red",
-        GREEN: "green",
-        ANY: "magenta",
-    }
-    return colored(color.name, color=color_map[color])
-
-
-def render_card(card: Card) -> str:
-    return render_color(card.color)
-
-
-def render_visible_cards(board: Board) -> str:
-    return ", ".join([render_card(card) for card in board.visible_cards])
-
-
 def render_public_player_stats(board: Board) -> str:
     longest_paths = find_longest_paths(board)
     data = defaultdict(list)
@@ -140,20 +162,32 @@ def render_ticket(ticket: Ticket, connected: bool) -> str:
 
 
 def print_player(board: Board, player: Player) -> None:
-    print("Cards in hand:")
+    print(colored("Cards in hand:", attrs=["bold"]))
     for color, num_cards in player.card_counts.items():
-        print(f"  {render_color(color)}: {num_cards} cards")
+        print(f"  {color}: {num_cards} cards")
 
     connected = check_tickets(board, player)
-    print("Tickets:")
+    print(colored("Tickets:", attrs=["bold"]))
     for ticket, ticket_status in zip(player.tickets, connected):
         print(render_ticket(ticket, ticket_status))
 
 
 def print_board(board: Board) -> None:
-    print("*" * 20)
-    print(f"Visible cards: {render_visible_cards(board)}")
+    print(colored("Visible cards: ", attrs=["bold"]) + render_cards(board.visible_cards))
+    print(colored("Owned routes:", attrs=["bold"]))
+    for route_info in board.route_ownership.values():
+        print(f"  Player {route_info.player_id}: {route_info}")
     print(render_public_player_stats(board))
+
+
+def print_state(board: Board, player: Player) -> None:
+    print()
+    print(colored("Board information:", color="red", attrs=["bold"]))
+    print_board(board)
+    print(colored("Player information:", color="red", attrs=["bold"]))
+    print_player(board=board, player=player)
+    print()
+    print()
 
 
 T = TypeVar("T")
@@ -172,6 +206,7 @@ def read_option(description: str, options: list[T]) -> T:
             index = int(option_index)
             assert 0 <= index < len(options)
             print(f"Selected option {options[index]}")
+            print()
             return options[index]
         except (ValueError, AssertionError) as e:
             print(f"Invalid option: {option_index}. Try again.")

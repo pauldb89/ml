@@ -10,6 +10,13 @@ py_library(
     ]
 )
 
+py_binary(
+    name = "simulate",
+    srcs = ["ticket2ride/simulate.py"],
+    main = "ticket2ride/simulate.py",
+    deps = [":board_games"]
+)
+
 pytest_test(
     name = "board_games_test",
     srcs = glob(["tests/**/test*.py"]),

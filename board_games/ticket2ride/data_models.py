@@ -1,5 +1,6 @@
 from dataclasses import dataclass
-from enum import StrEnum
+
+from termcolor import colored
 
 
 @dataclass(frozen=True, order=True)
@@ -8,7 +9,12 @@ class Color:
     name: str
 
     def __repr__(self) -> str:
-        return f"{self.name}"
+        color_overrides: dict[str, str] = {
+            "pink": "light_magenta",
+            "orange": "light_red",
+            "any": "magenta",
+        }
+        return f"{colored(self.name, color=color_overrides.get(self.name, self.name))}"
 
 
 @dataclass(frozen=True)
@@ -22,7 +28,11 @@ class Card:
     color: Color
 
     def __repr__(self) -> str:
-        return f"{self.color.name}"
+        return f"{self.color}"
+
+
+def render_cards(cards: list[Card]) -> str:
+    return ", ".join([repr(card) for card in cards])
 
 
 ROUTE_LENGTHS_TO_VALUES: dict[int, int] = {
@@ -50,13 +60,10 @@ class Route:
 
         return ROUTE_LENGTHS_TO_VALUES[self.length]
 
-
-@dataclass(order=True)
-class RouteInfo:
-    route_id: int
-    player_id: int
-    color: Color
-    num_any_cards: int
+    def __repr__(self) -> str:
+        return (
+            f"{self.source_city.name} - {self.destination_city.name} ({self.color}, {self.length})"
+        )
 
 
 @dataclass(frozen=True)
@@ -66,29 +73,11 @@ class Ticket:
     destination_city: City
     value: int
 
-
-class ActionType(StrEnum):
-    DRAW_CARDS = "DRAW_CARDS"
-    BUILD_ROUTE = "BUILD_ROUTE"
-    DRAW_TICKETS = "DRAW_TICKETS"
+    def __repr__(self) -> str:
+        return f"{self.source_city.name} - {self.destination_city.name} ({self.value} points)"
 
 
-@dataclass(frozen=True)
-class Action:
-    player_id: int
-    action_type: ActionType
+Tickets = tuple[Ticket, ...]
+DrawnTickets = tuple[Ticket | Ticket | Ticket]
 
 
-@dataclass(frozen=True)
-class DrawCards(Action):
-    cards: list[Card | None]
-
-
-@dataclass(frozen=True)
-class DrawTickets(Action):
-    tickets: list[Ticket]
-
-
-@dataclass(frozen=True)
-class BuildRoute(Action):
-    route_info: RouteInfo

@@ -1,12 +1,15 @@
 from dataclasses import dataclass
 
+from termcolor import colored
+
 from board_games.ticket2ride.board_logic import Player, Board, count_ticket_points
 from board_games.ticket2ride.consts import ROUTES, NUM_LAST_TURN_CARS, ANY, \
     NUM_INITIAL_PLAYER_CARDS
-from board_games.ticket2ride.data_models import Card, DrawTickets, ActionType, DrawCards, Action, \
-    BuildRoute
+from board_games.ticket2ride.data_models import Card
 from board_games.ticket2ride.longest_path import find_longest_paths
 from board_games.ticket2ride.policies import Policy
+from board_games.ticket2ride.policy_helpers import Action, ActionType, DrawCards, DrawTickets, \
+    BuildRoute
 
 
 @dataclass
@@ -37,18 +40,22 @@ class Game:
                 card = self.board.card_deck.draw()
                 player.card_counts[card.color] += 1
 
-            player.tickets = policy.choose_tickets(
-                board=self.board,
-                player=player,
-                ticket_options=self.board.ticket_deck.get(),
-                is_initial_turn=True
+            player.tickets.extend(
+                policy.choose_tickets(
+                    board=self.board,
+                    player=player,
+                    drawn_tickets=self.board.ticket_deck.get(),
+                    is_initial_turn=True
+                )
             )
             self.players.append(player)
 
-    def run(self) -> GameStats:
+    def run(self, verbose: bool = False) -> GameStats:
         final_player_id = None
         player_id = 0
+        turn_id = 0
         while True:
+            actions = []
             policy = self.policies[player_id]
             player = self.players[player_id]
 
@@ -70,7 +77,7 @@ class Game:
                         if card.color == ANY:
                             break
 
-                self.action_log.append(
+                actions.append(
                     DrawCards(
                         player_id=player_id,
                         action_type=action_type,
@@ -78,15 +85,14 @@ class Game:
                     )
                 )
             elif action_type == ActionType.DRAW_TICKETS:
-                tickets = self.board.ticket_deck.get()
                 selected_tickets = policy.choose_tickets(
                     board=self.board,
                     player=player,
-                    ticket_options=tickets,
+                    drawn_tickets=self.board.ticket_deck.get(),
                     is_initial_turn=False,
                 )
                 player.tickets.extend(selected_tickets)
-                self.action_log.append(
+                actions.append(
                     DrawTickets(
                         player_id=player_id,
                         action_type=action_type,
@@ -114,7 +120,7 @@ class Game:
 
                 self.board.route_points[player.id] += route.value
 
-                self.action_log.append(
+                actions.append(
                     BuildRoute(
                         player_id=player_id,
                         action_type=action_type,
@@ -124,13 +130,26 @@ class Game:
             else:
                 raise ValueError(f"Unknown action type: {action_type}")
 
+            if verbose:
+                for action in actions:
+                    print(
+                        colored(f"Action turn {turn_id}: ", color="green", attrs=["bold"])
+                        + str(action)
+                    )
+
+            self.action_log.extend(actions)
+
             if final_player_id is not None:
                 if player_id == final_player_id:
                     break
             elif self.board.train_cars[player_id] <= NUM_LAST_TURN_CARS:
                 final_player_id = player_id
 
-            player_id = (player_id + 1) % len(self.players)
+            if player_id + 1 < len(self.players):
+                player_id += 1
+            else:
+                player_id = 0
+                turn_id += 1
 
         return self.compute_game_stats()
 
