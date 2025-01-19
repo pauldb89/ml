@@ -6,8 +6,7 @@ from dataclasses import dataclass
 from board_games.ticket2ride import consts
 from board_games.ticket2ride.consts import MAX_VISIBLE_ANY_CARDS, ANY, NUM_VISIBLE_CARDS, \
     NUM_INITIAL_TRAIN_CARS, COLORS, NUM_COLOR_CARDS, NUM_ANY_CARDS, TICKETS, ROUTES
-from board_games.ticket2ride.data_models import Color, Ticket, Card, DrawnTickets, \
-    Tickets
+from board_games.ticket2ride.entities import Color, Ticket, Card, DrawnTickets, Tickets
 from board_games.ticket2ride.disjoint_sets import DisjointSets
 
 

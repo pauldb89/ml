@@ -2,7 +2,7 @@ import abc
 import random
 
 from board_games.ticket2ride.board_logic import Board, Player, RouteInfo
-from board_games.ticket2ride.data_models import Card, Tickets, DrawnTickets
+from board_games.ticket2ride.entities import Card, Tickets, DrawnTickets
 from board_games.ticket2ride.policy_helpers import get_valid_actions, get_build_route_options, \
     read_option, get_ticket_draw_options, get_draw_card_options, print_state, ActionType
 

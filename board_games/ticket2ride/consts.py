@@ -1,4 +1,4 @@
-from board_games.ticket2ride.data_models import City, Color, Route, Ticket
+from board_games.ticket2ride.entities import City, Color, Route, Ticket
 
 NUM_COLOR_CARDS = 12
 NUM_ANY_CARDS = 14

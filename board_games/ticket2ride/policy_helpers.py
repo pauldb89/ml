@@ -9,7 +9,7 @@ from termcolor import colored
 
 from board_games.ticket2ride.board_logic import Board, Player, check_tickets, RouteInfo
 from board_games.ticket2ride.consts import ROUTES, ANY, COLORS
-from board_games.ticket2ride.data_models import Card, Ticket, DrawnTickets, Tickets, render_cards
+from board_games.ticket2ride.entities import Card, Ticket, DrawnTickets, Tickets, render_cards
 from board_games.ticket2ride.longest_path import find_longest_paths
 
 

@@ -5,7 +5,7 @@ from termcolor import colored
 from board_games.ticket2ride.board_logic import Player, Board, count_ticket_points
 from board_games.ticket2ride.consts import ROUTES, NUM_LAST_TURN_CARS, ANY, \
     NUM_INITIAL_PLAYER_CARDS
-from board_games.ticket2ride.data_models import Card
+from board_games.ticket2ride.entities import Card
 from board_games.ticket2ride.longest_path import find_longest_paths
 from board_games.ticket2ride.policies import Policy
 from board_games.ticket2ride.policy_helpers import Action, ActionType, DrawCards, DrawTickets, \
