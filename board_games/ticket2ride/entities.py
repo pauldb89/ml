@@ -17,13 +17,13 @@ class Color:
         return f"{colored(self.name, color=color_overrides.get(self.name, self.name))}"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, order=True)
 class City:
     id: int
     name: str
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, order=True)
 class Card:
     color: Color
 
@@ -45,7 +45,7 @@ ROUTE_LENGTHS_TO_VALUES: dict[int, int] = {
 }
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, order=True)
 class Route:
     id: int
     source_city: City
@@ -66,7 +66,7 @@ class Route:
         )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, order=True)
 class Ticket:
     id: int
     source_city: City
@@ -78,6 +78,6 @@ class Ticket:
 
 
 Tickets = tuple[Ticket, ...]
-DrawnTickets = tuple[Ticket | Ticket | Ticket]
+DrawnTickets = tuple[Ticket, Ticket, Ticket]
 
 

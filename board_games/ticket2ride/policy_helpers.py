@@ -57,6 +57,38 @@ class BuildRoute(Action):
         return f"Player {self.player_id} built {self.route_info}"
 
 
+def get_valid_actions(board: Board, player: Player) -> list[ActionType]:
+    valid_action_types = []
+    if len(board.card_deck) + len(board.visible_cards) >= 2:
+        valid_action_types.append(ActionType.DRAW_CARDS)
+
+    if len(board.ticket_deck) >= 3:
+        valid_action_types.append(ActionType.DRAW_TICKETS)
+
+    build_route_options = get_build_route_options(board, player)
+    if len(build_route_options) > 0:
+        valid_action_types.append(ActionType.BUILD_ROUTE)
+
+    return valid_action_types
+
+
+def get_draw_card_options(board: Board, can_draw_any: bool) -> list[Card | None]:
+    card_options: list[Card | None] = []
+    if len(board.card_deck) >= 1:
+        card_options.append(None)
+
+    for card in board.visible_cards:
+        if card in card_options:
+            continue
+
+        if card.color == ANY and not can_draw_any:
+            continue
+
+        card_options.append(card)
+
+    return card_options
+
+
 def get_build_route_options(board: Board, player: Player) -> list[RouteInfo]:
     route_options: list[RouteInfo] = []
     for route in ROUTES:
@@ -98,46 +130,11 @@ def get_build_route_options(board: Board, player: Player) -> list[RouteInfo]:
     return route_options
 
 
-# TODO(pauldb): Unit test.
-def get_valid_actions(board: Board, player: Player) -> list[ActionType]:
-    valid_action_types = []
-    if len(board.card_deck) + len(board.visible_cards) >= 2:
-        valid_action_types.append(ActionType.DRAW_CARDS)
-
-    if len(board.ticket_deck) >= 3:
-        valid_action_types.append(ActionType.DRAW_TICKETS)
-
-    build_route_options = get_build_route_options(board, player)
-    if len(build_route_options) > 0:
-        valid_action_types.append(ActionType.BUILD_ROUTE)
-
-    return valid_action_types
-
-
-# TODO(pauldb): Unit test.
 def get_ticket_draw_options(tickets: DrawnTickets, is_initial_turn: bool) -> list[Tickets]:
     draw_options = [tickets, *itertools.combinations(tickets, 2)]
     if not is_initial_turn:
         draw_options.extend(itertools.combinations(tickets, 1))
     return draw_options
-
-
-# TODO(pauldb): Unit test.
-def get_draw_card_options(board: Board, can_draw_any: bool) -> list[Card | None]:
-    card_options: list[Card | None] = []
-    if len(board.card_deck) >= 1:
-        card_options.append(None)
-
-    for card in board.visible_cards:
-        if card in card_options:
-            continue
-
-        if card.color == ANY and not can_draw_any:
-            continue
-
-        card_options.append(card)
-
-    return card_options
 
 
 def render_public_player_stats(board: Board) -> str:
