@@ -26,7 +26,6 @@ def main() -> None:
 
     game = Game(policies=policies)
 
-    # game = Game(policies=[KeyboardInputPolicy(), UniformRandomPolicy()])
     start_time = time.time()
     game_stats = game.run(verbose=True)
     print(f"Running the game took {time.time() - start_time} seconds")
