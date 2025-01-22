@@ -5,8 +5,10 @@ py_library(
     name = "board_games",
     srcs = glob(["**/*.py"], exclude = ["tests/**"]),
     deps = [
+        "@pypi//numpy",
         "@pypi//tabulate",
         "@pypi//termcolor",
+        "@pypi//torch",
     ]
 )
 

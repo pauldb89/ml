@@ -54,10 +54,6 @@ class RelativeSelfAttention(nn.Module):
     def __init__(self, dim: int, heads: int, rel_window: int, rel_proj: nn.Linear) -> None:
         super().__init__()
 
-        assert (
-            dim % heads == 0
-        ), f"The hidden dimension {dim} is not visible by the number of heads {heads}"
-
         self.heads = heads
         self.rel_window = rel_window
         self.rel_proj = rel_proj
@@ -76,16 +72,15 @@ class RelativeSelfAttention(nn.Module):
         values = torch.permute(values, dims=[0, 2, 1, 3])
 
         offsets = (
-            torch.arange(s, device=x.device).unsqueeze(dim=0)
-            - torch.arange(s, device=x.device).unsqueeze(dim=1)
-        ).clamp(min=-self.rel_window, max=self.rel_window) + self.rel_window
+              torch.arange(s, device=x.device).unsqueeze(dim=0) - torch.arange(s, device=x.device).unsqueeze(dim=1)
+        ).clamp(min=-self.rel_window, max=self.rel_window).repeat(b, self.heads, 1, 1) + self.rel_window
 
         content_scores = torch.einsum("bhik,bhjk->bhij", queries, keys) / self.scalar_norm
         position_scores = torch.gather(self.rel_proj(queries), dim=-1, index=offsets)
         attention = torch.softmax(content_scores + position_scores, dim=-1)
 
         ret = torch.einsum("bhij,bhjk->bhik", attention, values)
-        return ret.permute(dims=[0, 2, 1, 3]).view(b, s, d)
+        return ret.permute(dims=[0, 2, 1, 3]).reshape(b, s, d)
 
 
 class TransformerBlock(nn.Module):
@@ -139,7 +134,11 @@ class Model(nn.Module):
                     feature = FEATURE_REGISTRY[feature_type]
                     self.embeddings.append(nn.Embedding(feature.cardinality, dim))
 
-        rel_proj = nn.Linear(2 * rel_window + 3, dim)
+        assert (
+            dim % heads == 0
+        ), f"The hidden dimension {dim} is not visible by the number of heads {heads}"
+        rel_proj = nn.Linear(dim // heads, 2 * rel_window + 3)
+
         blocks = [
             TransformerBlock(dim=dim, heads=heads, rel_window=rel_window, rel_proj=rel_proj)
             for _ in range(layers)
@@ -161,6 +160,7 @@ class Model(nn.Module):
             features = []
             for extractor in self.extractors:
                 features.extend(extractor.extract(context))
+            batch_features.append(features)
 
         return batch_features
 
@@ -169,13 +169,13 @@ class Model(nn.Module):
         for features in batch_features:
             seq = []
             for feature in features:
-                seq.append(self.embeddings[self.feature_index[feature.type]](feature.value))
-            batch_seq.append(torch.stack(seq, dim=0))
+                seq.append(self.embeddings[self.feature_index[feature.type]](torch.LongTensor([feature.value])))
+            batch_seq.append(torch.cat(seq, dim=0))
 
         x = torch.stack(batch_seq, dim=0)
         x = self.blocks(x)
-        x = self.norm(x)[:, x, :]
-        return self.heads[head](x).masked_fill(torch.tensor(mask) == 0, value=float("-inf"))
+        x = self.norm(x)[:, 0, :]
+        return self.heads[head](x).masked_fill(mask == 0, value=float("-inf"))
 
     def predict(self, features: BatchFeatures, head: str, mask: torch.Tensor) -> torch.Tensor:
         logits = self(features, head, mask)

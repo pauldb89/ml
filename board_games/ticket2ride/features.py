@@ -102,7 +102,7 @@ class TaskTypeExtractor(Extractor):
 
     def extract(self, context: FeatureContext) -> Features:
         return [
-            FeatureValue(type=FeatureType.SEPARATOR, value=Separator.TASK_TYPE),
+            FeatureValue(type=FeatureType.SEPARATOR, value=Separator.TASK_TYPE.value),
             FeatureValue(type=FeatureType.TASK_TYPE, value=context.task_type),
         ]
 
@@ -114,7 +114,7 @@ class PlayerIdExtractor(Extractor):
 
     def extract(self, context: FeatureContext) -> Features:
         return [
-            FeatureValue(type=FeatureType.SEPARATOR, value=Separator.PLAYER_ID),
+            FeatureValue(type=FeatureType.SEPARATOR, value=Separator.PLAYER_ID.value),
             FeatureValue(type=FeatureType.PLAYER_ID, value=context.player.id),
         ]
 
@@ -125,7 +125,7 @@ class TrainCarsExtractor(Extractor):
         return [FeatureType.SEPARATOR, FeatureType.TRAIN_CARS]
 
     def extract(self, context: FeatureContext) -> Features:
-        features = [FeatureValue(type=FeatureType.SEPARATOR, value=Separator.TRAIN_CARS)]
+        features = [FeatureValue(type=FeatureType.SEPARATOR, value=Separator.TRAIN_CARS.value)]
         for player_train_cars in context.board.train_cars:
             features.append(FeatureValue(type=FeatureType.TRAIN_CARS, value=player_train_cars))
 
@@ -138,7 +138,7 @@ class VisibleCardsExtractor(Extractor):
         return [FeatureType.SEPARATOR, FeatureType.COLOR]
 
     def extract(self, context: FeatureContext) -> Features:
-        features = [FeatureValue(type=FeatureType.SEPARATOR, value=Separator.VISIBLE_CARDS)]
+        features = [FeatureValue(type=FeatureType.SEPARATOR, value=Separator.VISIBLE_CARDS.value)]
         for card in context.board.visible_cards:
             features.append(FeatureValue(type=FeatureType.COLOR, value=card.color.id))
 
@@ -153,25 +153,26 @@ class RouteOwnershipExtractor(Extractor):
             FeatureType.ROUTE,
             FeatureType.CITY,
             FeatureType.PLAYER_ID,
+            FeatureType.ROUTE_LENGTH,
         ]
 
     def extract(self, context: FeatureContext) -> Features:
-        features = [FeatureValue(type=FeatureType.SEPARATOR, value=Separator.OWNED_ROUTES)]
+        features = [FeatureValue(type=FeatureType.SEPARATOR, value=Separator.OWNED_ROUTES.value)]
         for route_info in context.board.route_ownership.values():
             route = ROUTES[route_info.route_id]
             features.extend([
-                FeatureValue(type=FeatureType.SEPARATOR, value=Separator.ROUTE_INFO),
+                FeatureValue(type=FeatureType.SEPARATOR, value=Separator.ROUTE_INFO.value),
                 FeatureValue(type=FeatureType.ROUTE, value=route.id),
                 FeatureValue(type=FeatureType.CITY, value=route.source_city.id),
                 FeatureValue(type=FeatureType.CITY, value=route.destination_city.id),
                 FeatureValue(type=FeatureType.PLAYER_ID, value=route_info.player_id),
             ])
 
-        features.append(FeatureValue(type=FeatureType.SEPARATOR, value=Separator.AVAILABLE_ROUTES))
+        features.append(FeatureValue(type=FeatureType.SEPARATOR, value=Separator.AVAILABLE_ROUTES.value))
         for route in ROUTES:
             if route.id not in context.board.route_ownership:
                 features.extend([
-                    FeatureValue(type=FeatureType.SEPARATOR, value=Separator.ROUTE_INFO),
+                    FeatureValue(type=FeatureType.SEPARATOR, value=Separator.ROUTE_INFO.value),
                     FeatureValue(type=FeatureType.ROUTE, value=route.id),
                     FeatureValue(type=FeatureType.CITY, value=route.source_city.id),
                     FeatureValue(type=FeatureType.CITY, value=route.destination_city.id),
@@ -194,7 +195,9 @@ class TicketExtractor(Extractor):
         ]
 
     def extract(self, context: FeatureContext) -> Features:
-        features = [FeatureValue(type=FeatureType.SEPARATOR, value=self.separator)]
+        tickets = self.get_tickets(context)
+        if tickets is None:
+            return []
 
         disjoint_sets = DisjointSets()
         for route_info in context.board.route_ownership.values():
@@ -202,9 +205,10 @@ class TicketExtractor(Extractor):
                 route = ROUTES[route_info.route_id]
                 disjoint_sets.connect(route.source_city, route.destination_city)
 
-        for ticket in self.get_tickets(context):
+        features = [FeatureValue(type=FeatureType.SEPARATOR, value=self.separator.value)]
+        for ticket in tickets:
             features.extend([
-                FeatureValue(type=FeatureType.SEPARATOR, value=Separator.TICKET),
+                FeatureValue(type=FeatureType.SEPARATOR, value=Separator.TICKET.value),
                 FeatureValue(type=FeatureType.TICKET, value=ticket.id),
                 FeatureValue(type=FeatureType.CITY, value=ticket.source_city.id),
                 FeatureValue(type=FeatureType.CITY, value=ticket.destination_city.id),
@@ -223,7 +227,7 @@ class TicketExtractor(Extractor):
         pass
 
     @abc.abstractmethod
-    def get_tickets(self, context: FeatureContext) -> Iterable[Ticket]:
+    def get_tickets(self, context: FeatureContext) -> Iterable[Ticket] | None:
         pass
 
 
@@ -232,7 +236,7 @@ class OwnedTicketsExtractor(TicketExtractor):
     def separator(self) -> Separator:
         return Separator.OWNED_TICKETS
 
-    def get_tickets(self, context: FeatureContext) -> Iterable[Ticket]:
+    def get_tickets(self, context: FeatureContext) -> list[Ticket] | None:
         return context.player.tickets
 
 
@@ -241,8 +245,7 @@ class DrawnTicketsExtractor(TicketExtractor):
     def separator(self) -> Separator:
         return Separator.DRAWN_TICKETS
 
-    def get_tickets(self, context: FeatureContext) -> Iterable[Ticket]:
-        assert context.drawn_tickets is not None
+    def get_tickets(self, context: FeatureContext) -> Iterable[Ticket] | None:
         return context.drawn_tickets
 
 
