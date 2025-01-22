@@ -131,9 +131,10 @@ def get_build_route_options(board: Board, player: Player) -> list[RouteInfo]:
 
 
 def get_ticket_draw_options(tickets: DrawnTickets, is_initial_turn: bool) -> list[Tickets]:
-    draw_options = [tickets, *itertools.combinations(tickets, 2)]
-    if not is_initial_turn:
-        draw_options.extend(itertools.combinations(tickets, 1))
+    start = 1 if is_initial_turn else 0
+    draw_options: list[Tickets] = []
+    for k in range(start, len(tickets)):
+        draw_options.extend(itertools.combinations(tickets, k+1))
     return draw_options
 
 
@@ -205,5 +206,5 @@ def read_option(description: str, options: list[T]) -> T:
             print(f"Selected option {options[index]}")
             print()
             return options[index]
-        except (ValueError, AssertionError) as e:
+        except (ValueError, AssertionError):
             print(f"Invalid option: {option_index}. Try again.")

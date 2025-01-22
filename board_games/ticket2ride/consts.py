@@ -31,6 +31,8 @@ COLORS = [
     GREEN,
 ]
 
+EXTENDED_COLORS = COLORS + [ANY]
+
 VANCOUVER = City(id=0, name="Vancouver")
 CALGARY = City(id=1, name="Calgary")
 WINNIPEG = City(id=2, name="Winnipeg")

@@ -109,10 +109,12 @@ class Game:
                 num_regular_cards = route.length - route_info.num_any_cards
                 for _ in range(num_regular_cards):
                     player.card_counts[route_info.color] -= 1
+                    assert player.card_counts[route_info.color] >= 0
                     self.board.card_deck.discard(Card(color=route_info.color))
 
                 for _ in range(route_info.num_any_cards):
                     player.card_counts[ANY] -= 1
+                    assert player.card_counts[ANY] >= 0
                     self.board.card_deck.discard(Card(color=ANY))
 
                 assert self.board.train_cars[player.id] >= route.length
