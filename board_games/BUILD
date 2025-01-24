@@ -22,8 +22,11 @@ py_binary(
 py_binary(
     name = "train",
     srcs = ["ticket2ride/scripts/train.py"],
-    main = "ticket2ride/scripts/simulate.py",
-    deps = [":board_games"]
+    main = "ticket2ride/scripts/train.py",
+    deps = [
+        ":board_games",
+        "@pypi//wandb",
+    ]
 )
 
 pytest_test(

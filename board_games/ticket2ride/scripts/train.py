@@ -1,6 +1,6 @@
 from argparse import ArgumentParser
 
-from common.wandb import wandb_init, wandb_config_update
+import wandb
 
 
 def main() -> None:
@@ -8,8 +8,8 @@ def main() -> None:
     parser.add_argument("--epochs", type=int, default=2, help="Number of epochs")
     args = parser.parse_args()
 
-    wandb_init(project="board_games")
-    wandb_config_update(args)
+    wandb.init(project="board_games")
+    wandb.config.update(args)
 
 
 if __name__ == "__main__":
