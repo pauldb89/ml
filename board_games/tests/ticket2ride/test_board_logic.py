@@ -3,7 +3,7 @@ from typing import Callable
 import pytest
 
 from board_games.ticket2ride.board_logic import Board, Player, count_ticket_points, RouteInfo
-from board_games.ticket2ride.consts import ANY, WHITE, RED, BLUE, BLACK, GREEN, TICKETS
+from board_games.ticket2ride.entities import ANY, WHITE, RED, BLUE, BLACK, GREEN, TICKETS
 
 
 @pytest.fixture()

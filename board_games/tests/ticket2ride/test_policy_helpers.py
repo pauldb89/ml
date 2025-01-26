@@ -1,12 +1,11 @@
-from typing import Callable, Any, Protocol, Self
+from typing import Callable, Protocol, Self
 
 import pytest
 
 from board_games.ticket2ride.board_logic import Board, Player, RouteInfo
-from board_games.ticket2ride.consts import ANY, WHITE, RED, BLUE, BLACK, TICKETS
-from board_games.ticket2ride.entities import Card
+from board_games.ticket2ride.entities import Card, ANY, WHITE, RED, BLUE, BLACK, TICKETS
 from board_games.ticket2ride.policy_helpers import get_build_route_options, get_valid_actions, \
-    ActionType, get_ticket_draw_options, get_draw_card_options
+    ActionType, get_ticket_draw_options, get_draw_card_options, ObservedState
 
 
 class Comparable(Protocol):
@@ -29,25 +28,34 @@ def test_get_valid_actions(assert_item_count_equal: Callable[[list, list], None]
     assert len(board.visible_cards) == 5
     assert len(board.ticket_deck) == 30
 
-    player = Player(player_id=0, card_counts={ANY: 1})
-
-    assert_item_count_equal(
-        get_valid_actions(board=board, player=player),
-        [ActionType.DRAW_CARDS, ActionType.DRAW_TICKETS, ActionType.BUILD_ROUTE],
+    state = ObservedState(
+        board=board,
+        player=Player(player_id=0, card_counts={ANY: 1}),
+        action_type=ActionType.PLAN,
+        turn_id=0,
     )
 
-    player.card_counts = {}
+    assert_item_count_equal(get_valid_actions(state), [ActionType.DRAW_TICKETS])
+
+    state.turn_id = 1
+
     assert_item_count_equal(
-        get_valid_actions(board=board, player=player),
-        [ActionType.DRAW_CARDS, ActionType.DRAW_TICKETS],
+        get_valid_actions(state),
+        [ActionType.DRAW_CARD, ActionType.DRAW_TICKETS, ActionType.BUILD_ROUTE],
     )
 
-    board.ticket_deck.tickets = []
-    assert_item_count_equal(get_valid_actions(board=board, player=player), [ActionType.DRAW_CARDS])
+    state.player.card_counts = {}
+    assert_item_count_equal(
+        get_valid_actions(state),
+        [ActionType.DRAW_CARD, ActionType.DRAW_TICKETS],
+    )
 
-    board.visible_cards = []
-    board.card_deck.deck = [Card(color=ANY)]
-    assert_item_count_equal(get_valid_actions(board=board, player=player), [])
+    state.board.ticket_deck.tickets = []
+    assert_item_count_equal(get_valid_actions(state), [ActionType.DRAW_CARD])
+
+    state.board.visible_cards = []
+    state.board.card_deck.deck = [Card(color=ANY)]
+    assert_item_count_equal(get_valid_actions(state), [])
 
 
 def test_get_draw_card_options(assert_item_count_equal: Callable[[list, list], None]) -> None:
@@ -56,20 +64,26 @@ def test_get_draw_card_options(assert_item_count_equal: Callable[[list, list], N
         Card(color=WHITE), Card(color=BLACK), Card(color=WHITE), Card(color=ANY), Card(color=BLACK)
     ]
 
-    draw_options = get_draw_card_options(board=board, can_draw_any=True)
+    state = ObservedState(board=board, player=Player(player_id=0), action_type=ActionType.PLAN)
+
+    state.consecutive_card_draws = 0
+    draw_options = get_draw_card_options(state)
     expected_options = [Card(color=WHITE), Card(color=BLACK), Card(color=ANY), None]
     assert_item_count_equal(draw_options, expected_options)
 
-    draw_options = get_draw_card_options(board=board, can_draw_any=False)
+    state.consecutive_card_draws = 1
+    draw_options = get_draw_card_options(state)
     expected_options = [Card(color=WHITE), Card(color=BLACK), None]
     assert_item_count_equal(draw_options, expected_options)
 
-    board.card_deck.deck = []
-    draw_options = get_draw_card_options(board=board, can_draw_any=True)
+    state.consecutive_card_draws = 0
+    state.board.card_deck.deck = []
+    draw_options = get_draw_card_options(state)
     expected_options = [Card(color=WHITE), Card(color=BLACK), Card(color=ANY)]
     assert_item_count_equal(draw_options, expected_options)
 
-    draw_options = get_draw_card_options(board=board, can_draw_any=False)
+    state.consecutive_card_draws = 1
+    draw_options = get_draw_card_options(state)
     expected_options = [Card(color=WHITE), Card(color=BLACK)]
     assert_item_count_equal(draw_options, expected_options)
 
@@ -82,7 +96,9 @@ def test_get_build_route_options(assert_item_count_equal: Callable[[list, list],
         1: RouteInfo(route_id=1, player_id=0, color=BLUE, num_any_cards=0),
         2: RouteInfo(route_id=2, player_id=1, color=BLACK, num_any_cards=0),
     }
-    options: list[RouteInfo] = get_build_route_options(board=board, player=player)
+    options: list[RouteInfo] = get_build_route_options(
+        ObservedState(board=board, player=player, action_type=ActionType.BUILD_ROUTE)
+    )
 
     expected_options = [
         # WHITE routes.

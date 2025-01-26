@@ -12,6 +12,8 @@ def main() -> None:
     wandb.config.update(args)
 
 
+
+
 if __name__ == "__main__":
     main()
 

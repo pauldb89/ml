@@ -1,3 +1,4 @@
+import copy
 import itertools
 from collections import defaultdict
 from dataclasses import dataclass
@@ -8,13 +9,14 @@ from tabulate import tabulate
 from termcolor import colored
 
 from board_games.ticket2ride.board_logic import Board, Player, check_tickets, RouteInfo
-from board_games.ticket2ride.consts import ROUTES, ANY, COLORS
-from board_games.ticket2ride.entities import Card, Ticket, DrawnTickets, Tickets, render_cards
+from board_games.ticket2ride.consts import LONGEST_PATH_POINTS
+from board_games.ticket2ride.entities import Card, Ticket, DrawnTickets, Tickets, render_cards, ROUTES, ANY, COLORS
 from board_games.ticket2ride.longest_path import find_longest_paths
 
 
 class ActionType(StrEnum):
-    DRAW_CARDS = "DRAW_CARDS"
+    PLAN = "PLAN"
+    DRAW_CARD = "DRAW_CARD"
     BUILD_ROUTE = "BUILD_ROUTE"
     DRAW_TICKETS = "DRAW_TICKETS"
 
@@ -26,19 +28,22 @@ class Action:
 
 
 @dataclass(frozen=True)
-class DrawCards(Action):
-    cards: list[Card | None]
+class Plan(Action):
+    next_action_type: ActionType
 
     def __repr__(self) -> str:
-        text_parts = []
-        for card in self.cards:
-            if card is None:
-                text_parts.append("card from deck")
-            else:
-                text_parts.append(repr(card))
+        return f"Player {self.player_id} decided to take action {self.next_action_type.value}"
 
-        text = " and ".join(text_parts)
-        return f"Player {self.player_id} drew cards: {text}"
+
+@dataclass(frozen=True)
+class DrawCard(Action):
+    card: Card | None
+
+    def __repr__(self) -> str:
+        if self.card is None:
+            return f"Player {self.player_id} drew card from deck"
+        else:
+            return f"Player {self.player_id} drew card {self.card}"
 
 
 @dataclass(frozen=True)
@@ -57,31 +62,86 @@ class BuildRoute(Action):
         return f"Player {self.player_id} built {self.route_info}"
 
 
-def get_valid_actions(board: Board, player: Player) -> list[ActionType]:
-    valid_action_types = []
-    if len(board.card_deck) + len(board.visible_cards) >= 2:
-        valid_action_types.append(ActionType.DRAW_CARDS)
+@dataclass
+class PlayerScore:
+    player_id: int
+    route_points: int = 0
+    ticket_points: int = 0
+    longest_path_bonus: bool = False
 
-    if len(board.ticket_deck) >= 3:
+    @property
+    def total_points(self) -> int:
+        return (
+            self.route_points
+            + self.ticket_points
+            + (LONGEST_PATH_POINTS if self.longest_path_bonus else 0)
+        )
+
+
+@dataclass
+class Score:
+    scorecard: list[PlayerScore]
+    turn_score: PlayerScore
+
+
+# TODO(pauldb): I think we should consolidate this with the FeatureContext.
+class ObservedState:
+    board: Board
+    player: Player
+    next_action: ActionType
+    drawn_tickets: DrawnTickets | None
+
+    turn_id: int
+    terminal: bool
+    consecutive_card_draws: int
+
+    def __init__(
+        self,
+        board: Board,
+        player: Player,
+        action_type: ActionType,
+        terminal: bool = False,
+        turn_id: int = 0,
+        consecutive_card_draws: int = 0,
+        drawn_tickets: DrawnTickets | None = None,
+    ) -> None:
+        self.board = copy.deepcopy(board)
+        self.player = copy.deepcopy(player)
+        self.next_action = action_type
+        self.drawn_tickets = drawn_tickets
+
+        self.turn_id = turn_id
+        self.terminal = terminal
+        self.consecutive_card_draws = consecutive_card_draws
+
+
+def get_valid_actions(state: ObservedState) -> list[ActionType]:
+    valid_action_types = []
+
+    if len(state.board.ticket_deck) >= 3:
         valid_action_types.append(ActionType.DRAW_TICKETS)
 
-    build_route_options = get_build_route_options(board, player)
-    if len(build_route_options) > 0:
-        valid_action_types.append(ActionType.BUILD_ROUTE)
+    if state.turn_id > 0:
+        if len(state.board.card_deck) + len(state.board.visible_cards) >= 2:
+            valid_action_types.append(ActionType.DRAW_CARD)
+
+        build_route_options = get_build_route_options(state)
+        if len(build_route_options) > 0:
+            valid_action_types.append(ActionType.BUILD_ROUTE)
 
     return valid_action_types
 
 
-def get_draw_card_options(board: Board, can_draw_any: bool) -> list[Card | None]:
+def get_draw_card_options(state: ObservedState) -> list[Card | None]:
     card_options: list[Card | None] = []
-    if len(board.card_deck) >= 1:
+    if len(state.board.card_deck) >= 1:
         card_options.append(None)
 
-    for card in board.visible_cards:
+    for card in state.board.visible_cards:
         if card in card_options:
             continue
 
-        if card.color == ANY and not can_draw_any:
+        if card.color == ANY and state.consecutive_card_draws > 0:
             continue
 
         card_options.append(card)
@@ -89,7 +149,9 @@ def get_draw_card_options(board: Board, can_draw_any: bool) -> list[Card | None]
     return card_options
 
 
-def get_build_route_options(board: Board, player: Player) -> list[RouteInfo]:
+def get_build_route_options(state: ObservedState) -> list[RouteInfo]:
+    board, player = state.board, state.player
+
     route_options: list[RouteInfo] = []
     for route in ROUTES:
         # This route has already been built, so it's not a valid option.
@@ -178,12 +240,12 @@ def print_board(board: Board) -> None:
     print(render_public_player_stats(board))
 
 
-def print_state(board: Board, player: Player) -> None:
+def print_state(state: ObservedState) -> None:
     print()
     print(colored("Board information:", color="red", attrs=["bold"]))
-    print_board(board)
+    print_board(state.board)
     print(colored("Player information:", color="red", attrs=["bold"]))
-    print_player(board=board, player=player)
+    print_player(board=state.board, player=state.player)
     print()
     print()
 

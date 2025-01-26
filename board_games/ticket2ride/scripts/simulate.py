@@ -5,9 +5,9 @@ from argparse import ArgumentParser
 import torch
 
 from board_games.ticket2ride.features import ALL_EXTRACTORS
-from board_games.ticket2ride.game_logic import Game
+from board_games.ticket2ride.game_logic import Roller, Environment
 from board_games.ticket2ride.model import Model
-from board_games.ticket2ride.policies import KeyboardInputPolicy, ModelPolicy
+from board_games.ticket2ride.policies import KeyboardInputPolicy, ModelPolicy, UniformRandomPolicy
 
 
 def main() -> None:
@@ -20,11 +20,11 @@ def main() -> None:
     model = Model(extractors=ALL_EXTRACTORS, layers=2, dim=128, heads=4, rel_window=10)
 
     if args.manual:
-        policies = [KeyboardInputPolicy(), ModelPolicy(model)]
+        policies = [KeyboardInputPolicy(), UniformRandomPolicy()]
     else:
         policies = [ModelPolicy(model=model) for _ in range(2)]
 
-    game = Game(policies=policies)
+    game = Roller(env=Environment(num_players=2), policies=policies)
 
     start_time = time.time()
     game_stats = game.run(verbose=True)

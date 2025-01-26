@@ -1,8 +1,8 @@
 from dataclasses import dataclass
 
 from board_games.ticket2ride.board_logic import Board
-from board_games.ticket2ride.consts import CITIES, ROUTES, LONGEST_PATH_POINTS
-from board_games.ticket2ride.entities import Route
+from board_games.ticket2ride.consts import LONGEST_PATH_POINTS
+from board_games.ticket2ride.entities import Route, CITIES, ROUTES
 
 
 @dataclass

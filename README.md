@@ -10,9 +10,14 @@ The transitive list of dependencies is generated in `bazel_requirements.txt` wit
 pip-compile bazel_requirements.in --output-file=bazel_requirements.txt --allow-unsafe
 ```
 
-Run tests with 
+Run the test for a package with 
 ```shell
 bazel test //board_games:board_games_test
+```
+
+or individual tests with 
+```shell
+bazel test //board_games:board_games_test --test_arg=board_games/tests/ticket2ride/test_policy_helpers.py::test_get_valid_actions
 ```
 
 ### Weights and Biases

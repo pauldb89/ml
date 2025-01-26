@@ -4,9 +4,10 @@ from collections import defaultdict
 from dataclasses import dataclass
 
 from board_games.ticket2ride import consts
-from board_games.ticket2ride.consts import MAX_VISIBLE_ANY_CARDS, ANY, NUM_VISIBLE_CARDS, \
-    NUM_INITIAL_TRAIN_CARS, COLORS, NUM_COLOR_CARDS, NUM_ANY_CARDS, TICKETS, ROUTES
-from board_games.ticket2ride.entities import Color, Ticket, Card, DrawnTickets, Tickets
+from board_games.ticket2ride.consts import MAX_VISIBLE_ANY_CARDS, NUM_VISIBLE_CARDS, \
+    NUM_INITIAL_TRAIN_CARS, NUM_COLOR_CARDS, NUM_ANY_CARDS
+from board_games.ticket2ride.entities import Color, Ticket, Card, DrawnTickets, Tickets, TICKETS, \
+    ANY, COLORS, ROUTES
 from board_games.ticket2ride.disjoint_sets import DisjointSets
 
 
@@ -35,7 +36,7 @@ class TicketDeck:
 
     def get(self) -> DrawnTickets:
         assert len(self.tickets) >= 3
-        return tuple(self.tickets.pop() for _ in range(3))
+        return self.tickets.pop(), self.tickets.pop(), self.tickets.pop()
 
     def __len__(self) -> int:
         return len(self.tickets)
