@@ -3,9 +3,13 @@ import enum
 from dataclasses import dataclass
 from typing import Iterable
 
+from board_games.ticket2ride.city import CITIES
+from board_games.ticket2ride.color import EXTENDED_COLORS
 from board_games.ticket2ride.disjoint_sets import DisjointSets
-from board_games.ticket2ride.entities import Ticket, ROUTES, EXTENDED_COLORS, CITIES, TICKETS
-from board_games.ticket2ride.policy_helpers import ObservedState, ActionType
+from board_games.ticket2ride.actions import ActionType
+from board_games.ticket2ride.route import ROUTES
+from board_games.ticket2ride.state import ObservedState
+from board_games.ticket2ride.ticket import TICKETS, Ticket
 
 
 class Separator(enum.IntEnum):

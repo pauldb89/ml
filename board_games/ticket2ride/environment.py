@@ -1,28 +1,41 @@
-import copy
 from dataclasses import dataclass
 
 from termcolor import colored
 
-from board_games.ticket2ride.board_logic import Player, Board, count_ticket_points
-from board_games.ticket2ride.consts import NUM_LAST_TURN_CARS, \
-    NUM_INITIAL_PLAYER_CARDS, MIN_PLAYERS, MAX_PLAYERS
+from board_games.ticket2ride.actions import (
+    Action,
+    ActionType,
+    BuildRoute,
+    DrawCard,
+    DrawTickets,
+    Plan
+)
+from board_games.ticket2ride.board import Board
+from board_games.ticket2ride.card import Card
+from board_games.ticket2ride.color import ANY
+from board_games.ticket2ride.consts import (
+    MAX_PLAYERS,
+    MIN_PLAYERS,
+    NUM_INITIAL_PLAYER_CARDS,
+    NUM_LAST_TURN_CARS,
+)
 from board_games.ticket2ride.disjoint_sets import DisjointSets
-from board_games.ticket2ride.entities import Card, DrawnTickets, Route, ROUTES, ANY
-from board_games.ticket2ride.longest_path import find_longest_paths, find_longest_path
+from board_games.ticket2ride.longest_path import find_longest_path
+from board_games.ticket2ride.player import Player
 from board_games.ticket2ride.policies import Policy
-from board_games.ticket2ride.policy_helpers import Action, ActionType, DrawCard, DrawTickets, \
-    BuildRoute, Plan, ObservedState, Score, PlayerScore
+from board_games.ticket2ride.route import ROUTES, Route
+from board_games.ticket2ride.state import (
+    ObservedState,
+    PlayerScore,
+    Score,
+    Transition
+)
+from board_games.ticket2ride.ticket import DrawnTickets
 
 
 @dataclass
 class GameStats:
     scorecard: list[PlayerScore]
-
-
-@dataclass
-class Transition:
-    state: ObservedState
-    score: Score
 
 
 class Environment:
@@ -155,7 +168,8 @@ class Environment:
     ) -> Transition:
         # We must compute the score before advancing the state to the next player_id.
         score = self.get_score()
-        return Transition(state=self.get_next_state(next_action_type, drawn_tickets), score=score)
+        return Transition(
+            state=self.get_next_state(next_action_type, drawn_tickets), score=score)
 
     def step(self, action: Action) -> Transition:
         assert action.action_type == self.action_type

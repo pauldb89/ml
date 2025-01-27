@@ -4,11 +4,14 @@ import math
 import torch
 from torch import nn
 
-from board_games.ticket2ride.board_logic import RouteInfo
-from board_games.ticket2ride.entities import Color, Route, Card, EXTENDED_COLORS, ROUTES, ANY, COLORS
-from board_games.ticket2ride.features import Extractor, FeatureType, FEATURE_REGISTRY, BatchFeatures
-from board_games.ticket2ride.policy_helpers import ActionType, Plan, ObservedState, DrawCard, \
-    DrawTickets, BuildRoute
+from board_games.ticket2ride.actions import ActionType, BuildRoute, DrawCard, DrawTickets, Plan
+from board_games.ticket2ride.card import Card
+from board_games.ticket2ride.color import ANY, Color, COLORS, EXTENDED_COLORS
+from board_games.ticket2ride.features import BatchFeatures, FEATURE_REGISTRY, FeatureType, Extractor
+from board_games.ticket2ride.route import Route, ROUTES
+from board_games.ticket2ride.route_info import RouteInfo
+from board_games.ticket2ride.state import ObservedState
+
 
 CHOOSE_ACTION_CLASSES: list[ActionType] = [
     ActionType.DRAW_CARD,

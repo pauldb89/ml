@@ -1,5 +1,5 @@
 from board_games.ticket2ride.longest_path import find_longest_path
-from board_games.ticket2ride.entities import ROUTES
+from board_games.ticket2ride.route import ROUTES
 
 
 def test_longest_path() -> None:

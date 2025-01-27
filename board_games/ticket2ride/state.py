@@ -1,0 +1,65 @@
+import copy
+from dataclasses import dataclass
+from board_games.ticket2ride.actions import ActionType
+from board_games.ticket2ride.board import Board
+from board_games.ticket2ride.consts import LONGEST_PATH_POINTS
+from board_games.ticket2ride.player import Player
+from board_games.ticket2ride.ticket import DrawnTickets
+
+
+class ObservedState:
+    board: Board
+    player: Player
+    next_action: ActionType
+    drawn_tickets: DrawnTickets | None
+
+    turn_id: int
+    terminal: bool
+    consecutive_card_draws: int
+
+    def __init__(
+        self,
+        board: Board,
+        player: Player,
+        action_type: ActionType,
+        terminal: bool = False,
+        turn_id: int = 0,
+        consecutive_card_draws: int = 0,
+        drawn_tickets: DrawnTickets | None = None,
+    ) -> None:
+        self.board = copy.deepcopy(board)
+        self.player = copy.deepcopy(player)
+        self.next_action = action_type
+        self.drawn_tickets = drawn_tickets
+
+        self.turn_id = turn_id
+        self.terminal = terminal
+        self.consecutive_card_draws = consecutive_card_draws
+
+
+@dataclass
+class PlayerScore:
+    player_id: int
+    route_points: int = 0
+    ticket_points: int = 0
+    longest_path_bonus: bool = False
+
+    @property
+    def total_points(self) -> int:
+        return (
+            self.route_points
+            + self.ticket_points
+            + (LONGEST_PATH_POINTS if self.longest_path_bonus else 0)
+        )
+
+
+@dataclass
+class Score:
+    scorecard: list[PlayerScore]
+    turn_score: PlayerScore
+
+
+@dataclass
+class Transition:
+    state: ObservedState
+    score: Score

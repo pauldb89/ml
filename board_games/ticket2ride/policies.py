@@ -1,12 +1,23 @@
 import abc
 import random
 
-from board_games.ticket2ride.board_logic import Board, Player, RouteInfo
-from board_games.ticket2ride.entities import Card, Tickets, DrawnTickets
+from board_games.ticket2ride.actions import (
+    Action,
+    ActionType,
+    BuildRoute,
+    DrawCard,
+    DrawTickets,
+    Plan,
+)
+from board_games.ticket2ride.action_utils import (
+    get_build_route_options,
+    get_draw_card_options,
+    get_ticket_draw_options,
+    get_valid_actions,
+)
 from board_games.ticket2ride.model import Model
-from board_games.ticket2ride.policy_helpers import get_valid_actions, get_build_route_options, \
-    read_option, get_ticket_draw_options, get_draw_card_options, print_state, ActionType, \
-    ObservedState, DrawCard, Action, Plan, DrawTickets, BuildRoute
+from board_games.ticket2ride.render_utils import print_state, read_option
+from board_games.ticket2ride.state import ObservedState
 
 
 class Policy:

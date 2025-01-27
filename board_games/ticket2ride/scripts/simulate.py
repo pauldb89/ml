@@ -5,7 +5,7 @@ from argparse import ArgumentParser
 import torch
 
 from board_games.ticket2ride.features import ALL_EXTRACTORS
-from board_games.ticket2ride.game_logic import Roller, Environment
+from board_games.ticket2ride.environment import Roller, Environment
 from board_games.ticket2ride.model import Model
 from board_games.ticket2ride.policies import KeyboardInputPolicy, ModelPolicy, UniformRandomPolicy
 

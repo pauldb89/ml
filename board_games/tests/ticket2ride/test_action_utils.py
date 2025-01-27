@@ -2,10 +2,20 @@ from typing import Callable, Protocol, Self
 
 import pytest
 
-from board_games.ticket2ride.board_logic import Board, Player, RouteInfo
-from board_games.ticket2ride.entities import Card, ANY, WHITE, RED, BLUE, BLACK, TICKETS
-from board_games.ticket2ride.policy_helpers import get_build_route_options, get_valid_actions, \
-    ActionType, get_ticket_draw_options, get_draw_card_options, ObservedState
+from board_games.ticket2ride.actions import ActionType
+from board_games.ticket2ride.action_utils import (
+    get_build_route_options,
+    get_draw_card_options,
+    get_ticket_draw_options,
+    get_valid_actions,
+)
+from board_games.ticket2ride.board import Board
+from board_games.ticket2ride.card import Card
+from board_games.ticket2ride.color import ANY, BLACK, BLUE, RED, WHITE
+from board_games.ticket2ride.player import Player
+from board_games.ticket2ride.route_info import RouteInfo
+from board_games.ticket2ride.state import ObservedState
+from board_games.ticket2ride.ticket import TICKETS
 
 
 class Comparable(Protocol):
