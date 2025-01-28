@@ -1,6 +1,8 @@
 import abc
 import random
 
+import torch
+
 from board_games.ticket2ride.actions import (
     Action,
     ActionType,
@@ -13,10 +15,12 @@ from board_games.ticket2ride.action_utils import (
     get_build_route_options,
     get_draw_card_options,
     get_ticket_draw_options,
-    get_valid_actions,
+    get_valid_actions, PLAN_CLASSES, DRAW_CARD_CLASSES, CHOOSE_TICKETS_CLASSES, BUILD_ROUTE_CLASSES,
 )
 from board_games.ticket2ride.model import Model
 from board_games.ticket2ride.render_utils import print_state, read_option
+from board_games.ticket2ride.route import ROUTES
+from board_games.ticket2ride.route_info import RouteInfo
 from board_games.ticket2ride.state import ObservedState
 
 
@@ -56,7 +60,8 @@ class UniformRandomPolicy(Policy):
         return Plan(
             player_id=state.player.id,
             action_type=ActionType.PLAN,
-            next_action_type=random.choice(valid_action_types)
+            next_action_type=random.choice(valid_action_types),
+            class_id=None,
         )
 
     def draw_card(self, state: ObservedState) -> DrawCard:
@@ -64,7 +69,8 @@ class UniformRandomPolicy(Policy):
         return DrawCard(
             player_id=state.player.id,
             action_type=ActionType.DRAW_CARD,
-            card=random.choice(card_options)
+            card=random.choice(card_options),
+            class_id=None,
         )
 
     def choose_tickets(self, state: ObservedState) -> DrawTickets:
@@ -76,6 +82,7 @@ class UniformRandomPolicy(Policy):
             player_id=state.player.id,
             action_type=ActionType.DRAW_TICKETS,
             tickets=random.choice(draw_options),
+            class_id=None,
         )
 
     def build_route(self, state: ObservedState) -> BuildRoute:
@@ -83,7 +90,8 @@ class UniformRandomPolicy(Policy):
         return BuildRoute(
             player_id=state.player.id,
             action_type=ActionType.BUILD_ROUTE,
-            route_info=random.choice(route_options)
+            route_info=random.choice(route_options),
+            class_id=None,
         )
 
 
@@ -94,7 +102,8 @@ class KeyboardInputPolicy(Policy):
         return Plan(
             player_id=state.player.id,
             action_type=ActionType.PLAN,
-            next_action_type=read_option(description="Available actions:", options=valid_actions)
+            next_action_type=read_option(description="Available actions:", options=valid_actions),
+            class_id=None,
         )
 
     def draw_card(self, state: ObservedState) -> DrawCard:
@@ -104,6 +113,7 @@ class KeyboardInputPolicy(Policy):
             player_id=state.player.id,
             action_type=ActionType.DRAW_CARD,
             card=read_option(description="Available draw options:", options=draw_options),
+            class_id=None,
         )
 
     def choose_tickets(self, state: ObservedState) -> DrawTickets:
@@ -116,6 +126,7 @@ class KeyboardInputPolicy(Policy):
             player_id=state.player.id,
             action_type=ActionType.DRAW_TICKETS,
             tickets=read_option(description="Available ticket combos:", options=ticket_options),
+            class_id=None,
         )
 
     def build_route(self, state: ObservedState) -> BuildRoute:
@@ -128,6 +139,7 @@ class KeyboardInputPolicy(Policy):
                 description="Available route building options:",
                 options=build_options,
             ),
+            class_id=None,
         )
 
 
@@ -135,14 +147,111 @@ class ModelPolicy(Policy):
     def __init__(self, model: Model):
         self.model = model
 
+    @abc.abstractmethod
+    def classify(self, logits: torch.Tensor) -> int:
+        return torch.argmax(logits).item()
+
     def plan(self, state: ObservedState) -> Plan:
-        return self.model.plan(state, valid_action_types=get_valid_actions(state))
+        valid_action_types = get_valid_actions(state)
+        mask = []
+        for action_type in PLAN_CLASSES:
+            mask.append(int(action_type in valid_action_types))
+
+        logits = self.model(
+            states=[state],
+            head=ActionType.PLAN,
+            mask=torch.tensor([mask]),
+        ).unsqueeze(0)
+
+        class_id = self.classify(logits)
+
+        return Plan(
+            player_id=state.player.id,
+            action_type=ActionType.PLAN,
+            next_action_type=PLAN_CLASSES[class_id],
+            class_id=class_id,
+        )
 
     def draw_card(self, state: ObservedState) -> DrawCard:
-        return self.model.draw_card(state, draw_options=get_draw_card_options(state))
+        draw_options = get_draw_card_options(state)
+        mask = []
+        for cls in DRAW_CARD_CLASSES:
+            mask.append(int(cls in draw_options))
+
+        logits = self.model(
+            states=[state],
+            head=ActionType.DRAW_CARD,
+            mask=torch.tensor([mask]),
+        ).unsqueeze(0)
+
+        class_id = self.classify(logits)
+
+        return DrawCard(
+            player_id=state.player.id,
+            action_type=ActionType.DRAW_CARD,
+            card=DRAW_CARD_CLASSES[class_id],
+            class_id=class_id,
+        )
 
     def choose_tickets(self, state: ObservedState) -> DrawTickets:
-        return self.model.choose_tickets(state)
+        mask = []
+        for combo in CHOOSE_TICKETS_CLASSES:
+            mask.append(1 if len(combo) >= 2 or state.turn_id > 0 else 0)
+
+        logits = self.model(
+            states=[state],
+            head=ActionType.DRAW_TICKETS,
+            mask=torch.tensor([mask]),
+        ).unsqueeze(0)
+
+        class_id = self.classify(logits)
+        combo = CHOOSE_TICKETS_CLASSES[class_id]
+
+        return DrawTickets(
+            player_id=state.player.id,
+            action_type=ActionType.DRAW_TICKETS,
+            tickets=tuple(state.drawn_tickets[ticket_idx] for ticket_idx in combo),
+            class_id=class_id,
+        )
 
     def build_route(self, state: ObservedState) -> BuildRoute:
-        return self.model.build_route(state, build_options=get_build_route_options(state))
+        build_options = get_build_route_options(state)
+
+        valid_options = set()
+        for route_info in build_options:
+            valid_options.add((ROUTES[route_info.route_id], route_info.color))
+
+        mask = []
+        for cls in BUILD_ROUTE_CLASSES:
+            mask.append(int(cls in valid_options))
+
+        logits = self.model(
+            states=[state],
+            head=ActionType.BUILD_ROUTE,
+            mask=torch.tensor([mask]),
+        ).unsqueeze(0)
+
+        class_id = self.classify(logits)
+        route, color = BUILD_ROUTE_CLASSES[class_id]
+
+        return BuildRoute(
+            player_id=state.player.id,
+            action_type=ActionType.BUILD_ROUTE,
+            route_info=RouteInfo(
+                route_id=route.id,
+                player_id=state.player.id,
+                color=color,
+                num_any_cards=max(0, route.length - state.player.card_counts[color]),
+            ),
+            class_id=class_id,
+        )
+
+
+class StochasticModelPolicy(ModelPolicy):
+    def classify(self, logits: torch.Tensor) -> int:
+        return torch.distributions.Categorical(logits).sample().item()
+
+
+class ArgmaxModelPolicy(ModelPolicy):
+    def classify(self, logits: torch.Tensor) -> int:
+        return torch.argmax(logits, dim=-1).item()

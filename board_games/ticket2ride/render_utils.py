@@ -1,4 +1,7 @@
+import collections
 from collections import defaultdict
+from dataclasses import asdict
+
 from tabulate import tabulate
 from termcolor import colored
 from typing import TypeVar
@@ -9,7 +12,7 @@ from board_games.ticket2ride.disjoint_sets import DisjointSets
 from board_games.ticket2ride.longest_path import find_longest_paths
 from board_games.ticket2ride.player import Player
 from board_games.ticket2ride.route import ROUTES
-from board_games.ticket2ride.state import ObservedState
+from board_games.ticket2ride.state import ObservedState, PlayerScore
 from board_games.ticket2ride.ticket import Ticket
 
 
@@ -17,14 +20,14 @@ def render_public_player_stats(board: Board) -> str:
     longest_paths = find_longest_paths(board)
     data = defaultdict(list)
     for player_id in range(board.num_players):
-        data["Player"].append(player_id)
-        data["Total Visible Points"].append(
+        data["player"].append(player_id)
+        data["total_visible_points"].append(
             board.route_points[player_id] + longest_paths.points[player_id]
         )
-        data["Route Points"].append(board.route_points[player_id])
-        data["Longest Path Points"].append(longest_paths.points[player_id])
-        data["Longest Path Length"].append(longest_paths.lengths[player_id])
-        data["Train Cars Left"].append(board.train_cars[player_id])
+        data["route_points"].append(board.route_points[player_id])
+        data["longest_path_points"].append(longest_paths.points[player_id])
+        data["longest_path"].append(longest_paths.lengths[player_id])
+        data["train_cars_left"].append(board.train_cars[player_id])
 
     return tabulate(data, headers="keys", tablefmt="grid")
 
@@ -49,7 +52,7 @@ def print_player(board: Board, player: Player) -> None:
         print(
             render_ticket(
                 ticket,
-                disjoint_sets.connected(ticket.source_city, ticket.destination_city),
+                disjoint_sets.are_connected(ticket.source_city, ticket.destination_city),
             )
         )
 
@@ -70,6 +73,17 @@ def print_state(state: ObservedState) -> None:
     print_player(board=state.board, player=state.player)
     print()
     print()
+
+
+def print_scorecard(scorecard: list[PlayerScore]) -> None:
+    print(colored("Scorecard:", color="blue", attrs=["bold"]))
+    data = collections.defaultdict(list)
+    for player_score in scorecard:
+        for key, value in asdict(player_score).items():
+            data[key].append(value)
+        data["total_points"].append(player_score.total_points)
+
+    print(tabulate(data, headers="keys", tablefmt="grid"))
 
 
 T = TypeVar("T")

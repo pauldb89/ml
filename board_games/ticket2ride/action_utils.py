@@ -2,8 +2,8 @@ import itertools
 
 from board_games.ticket2ride.actions import ActionType
 from board_games.ticket2ride.card import Card
-from board_games.ticket2ride.color import ANY, COLORS
-from board_games.ticket2ride.route import ROUTES
+from board_games.ticket2ride.color import ANY, COLORS, EXTENDED_COLORS, Color
+from board_games.ticket2ride.route import ROUTES, Route
 from board_games.ticket2ride.route_info import RouteInfo
 from board_games.ticket2ride.state import ObservedState
 from board_games.ticket2ride.ticket import DrawnTickets, Tickets
@@ -94,4 +94,30 @@ def get_ticket_draw_options(tickets: DrawnTickets, is_initial_turn: bool) -> lis
         draw_options.extend(itertools.combinations(tickets, k+1))
     return draw_options
 
+
+def generate_card_classes() -> list[Card | None]:
+    return [None] + [Card(c) for c in EXTENDED_COLORS]
+
+
+def generate_choose_ticket_classes() -> list[tuple[int, ...]]:
+    return [x for k in range(3) for x in itertools.combinations(range(3), k+1)]
+
+
+def generate_build_route_classes() -> list[tuple[Route, Color]]:
+    classes = []
+    for route in ROUTES:
+        colors = [route.color] if route.color != ANY else COLORS
+        for color in colors:
+            classes.append((route, color))
+    return classes
+
+
+PLAN_CLASSES: list[ActionType] = [
+    ActionType.DRAW_CARD,
+    ActionType.DRAW_TICKETS,
+    ActionType.BUILD_ROUTE,
+]
+DRAW_CARD_CLASSES = generate_card_classes()
+CHOOSE_TICKETS_CLASSES = generate_choose_ticket_classes()
+BUILD_ROUTE_CLASSES = generate_build_route_classes()
 

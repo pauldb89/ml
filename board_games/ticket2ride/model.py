@@ -1,45 +1,29 @@
-import itertools
+import collections
 import math
+from dataclasses import dataclass
 
 import torch
 from torch import nn
+import torch.nn.functional as F
 
-from board_games.ticket2ride.actions import ActionType, BuildRoute, DrawCard, DrawTickets, Plan
-from board_games.ticket2ride.card import Card
-from board_games.ticket2ride.color import ANY, Color, COLORS, EXTENDED_COLORS
-from board_games.ticket2ride.features import BatchFeatures, FEATURE_REGISTRY, FeatureType, Extractor
-from board_games.ticket2ride.route import Route, ROUTES
-from board_games.ticket2ride.route_info import RouteInfo
-from board_games.ticket2ride.state import ObservedState
-
-
-CHOOSE_ACTION_CLASSES: list[ActionType] = [
-    ActionType.DRAW_CARD,
-    ActionType.DRAW_TICKETS,
-    ActionType.BUILD_ROUTE,
-]
+from board_games.ticket2ride.action_utils import PLAN_CLASSES, DRAW_CARD_CLASSES, \
+    CHOOSE_TICKETS_CLASSES, BUILD_ROUTE_CLASSES
+from board_games.ticket2ride.actions import ActionType, Action
+from board_games.ticket2ride.features import FEATURE_REGISTRY, FeatureType, \
+    Extractor, Features
+from board_games.ticket2ride.state import ObservedState, Score
 
 
-def generate_card_classes() -> list[Card | None]:
-    return [None] + [Card(c) for c in EXTENDED_COLORS]
+@dataclass
+class RawSample:
+    state: ObservedState
+    action: Action
+    score: Score
 
 
-def generate_choose_ticket_classes() -> list[tuple[int, ...]]:
-    return [x for k in range(3) for x in itertools.combinations(range(3), k+1)]
-
-
-def generate_build_route_classes() -> list[tuple[Route, Color]]:
-    classes = []
-    for route in ROUTES:
-        colors = [route.color] if route.color != ANY else COLORS
-        for color in colors:
-            classes.append((route, color))
-    return classes
-
-
-DRAW_CARD_CLASSES = generate_card_classes()
-CHOOSE_TICKETS_CLASSES = generate_choose_ticket_classes()
-BUILD_ROUTE_CLASSES = generate_build_route_classes()
+@dataclass
+class Sample(RawSample):
+    reward: float
 
 
 class Residual(nn.Module):
@@ -150,101 +134,56 @@ class Model(nn.Module):
         self.norm = nn.LayerNorm(dim, eps=1e-6)
 
         self.heads = nn.ModuleDict({
-            "action": nn.Linear(dim, len(CHOOSE_ACTION_CLASSES)),
-            "cards": nn.Linear(dim, len(DRAW_CARD_CLASSES)),
-            "tickets": nn.Linear(dim, len(CHOOSE_TICKETS_CLASSES)),
-            "routes": nn.Linear(dim, len(BUILD_ROUTE_CLASSES)),
+            ActionType.PLAN: nn.Linear(dim, len(PLAN_CLASSES)),
+            ActionType.DRAW_CARD: nn.Linear(dim, len(DRAW_CARD_CLASSES)),
+            ActionType.DRAW_TICKETS: nn.Linear(dim, len(CHOOSE_TICKETS_CLASSES)),
+            ActionType.BUILD_ROUTE: nn.Linear(dim, len(BUILD_ROUTE_CLASSES)),
         })
 
-    def featurize(self, contexts: list[ObservedState]) -> BatchFeatures:
-        batch_features = []
-        for context in contexts:
-            features = []
-            for extractor in self.extractors:
-                features.extend(extractor.extract(context))
-            batch_features.append(features)
+    def featurize(self, state: ObservedState) -> Features:
+        features = []
+        for extractor in self.extractors:
+            features.extend(extractor.extract(state))
 
-        return batch_features
+        return features
 
-    def forward(self, batch_features: BatchFeatures, head: str, mask: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        states: list[ObservedState],
+        head: ActionType,
+        mask: torch.Tensor | None = None,
+    ) -> torch.Tensor:
         batch_seq = []
-        for features in batch_features:
+        for state in states:
             seq = []
-            for feature in features:
-                seq.append(self.embeddings[self.feature_index[feature.type]](torch.LongTensor([feature.value])))
+            for feature in self.featurize(state):
+                embeddings = self.embeddings[self.feature_index[feature.type]]
+                seq.append(embeddings(torch.LongTensor([feature.value])))
             batch_seq.append(torch.cat(seq, dim=0))
 
         x = torch.stack(batch_seq, dim=0)
         x = self.blocks(x)
         x = self.norm(x)[:, 0, :]
-        return self.heads[head](x).masked_fill(mask == 0, value=float("-inf"))
+        logits = self.heads[head](x)
+        return logits if mask is None else logits.masked_fill(mask == 0, value=float("-inf"))
 
-    def predict(self, features: BatchFeatures, head: str, mask: torch.Tensor) -> torch.Tensor:
-        logits = self(features, head, mask)
-        return torch.argmax(logits, dim=-1)
+    def loss(self, samples: list[Sample]) -> torch.Tensor:
+        grouped_samples = collections.defaultdict(list)
+        for sample in samples:
+            grouped_samples[sample.state.next_action].append(sample)
 
-    def plan(self, state: ObservedState, valid_action_types: list[ActionType]) -> Plan:
-        mask = []
-        for action_type in CHOOSE_ACTION_CLASSES:
-            mask.append(int(action_type in valid_action_types))
+        logits = []
+        targets = []
+        weights = []
+        for action_type, group in grouped_samples.items():
+            batch_features = []
+            for sample in group:
+                batch_features.append(self.featurize(sample.state))
+                weights.append(sample.reward)
+                assert sample.action.class_index is not None
+                targets.append(sample.action.class_index)
 
-        batch_features = self.featurize([state])
-        action_index = self.predict(batch_features, head="action", mask=torch.tensor([mask])).item()
+            logits.append(self(batch_features, head=action_type))
 
-        return Plan(
-            player_id=state.player.id,
-            action_type=ActionType.PLAN,
-            next_action_type=CHOOSE_ACTION_CLASSES[action_index],
-        )
-
-    def draw_card(self, state: ObservedState, draw_options: list[Card | None]) -> DrawCard:
-        mask = []
-        for cls in DRAW_CARD_CLASSES:
-            mask.append(int(cls in draw_options))
-
-        batch_features = self.featurize([state])
-        card_index = self.predict(batch_features, head="cards", mask=torch.tensor([mask])).item()
-        return DrawCard(
-            player_id=state.player.id,
-            action_type=ActionType.DRAW_CARD,
-            card=DRAW_CARD_CLASSES[card_index]
-        )
-
-    def choose_tickets(self, state: ObservedState) -> DrawTickets:
-        mask = []
-        for combo in CHOOSE_TICKETS_CLASSES:
-            mask.append(1 if len(combo) >= 2 or state.turn_id > 0 else 0)
-
-        batch_features = self.featurize([state])
-        combo_index = self.predict(batch_features, head="tickets", mask=torch.tensor([mask])).item()
-        combo = CHOOSE_TICKETS_CLASSES[combo_index]
-
-        return DrawTickets(
-            player_id=state.player.id,
-            action_type=ActionType.DRAW_TICKETS,
-            tickets=tuple(state.drawn_tickets[ticket_idx] for ticket_idx in combo)
-        )
-
-    def build_route(self, state: ObservedState, build_options: list[RouteInfo]) -> BuildRoute:
-        valid_options = set()
-        for route_info in build_options:
-            valid_options.add((ROUTES[route_info.route_id], route_info.color))
-
-        mask = []
-        for cls in BUILD_ROUTE_CLASSES:
-            mask.append(int(cls in valid_options))
-
-        batch_features = self.featurize([state])
-        route_index = self.predict(batch_features, head="routes", mask=torch.tensor([mask])).item()
-        route, color = BUILD_ROUTE_CLASSES[route_index]
-
-        return BuildRoute(
-            player_id=state.player.id,
-            action_type=ActionType.BUILD_ROUTE,
-            route_info=RouteInfo(
-                route_id=route.id,
-                player_id=state.player.id,
-                color=color,
-                num_any_cards=max(0, route.length - state.player.card_counts[color]),
-            )
-        )
+        logits = torch.cat(logits, dim=0)
+        return F.cross_entropy(logits, torch.tensor(targets), torch.tensor(weights))

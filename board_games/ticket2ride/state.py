@@ -1,5 +1,8 @@
 import copy
 from dataclasses import dataclass
+from functools import cached_property
+from typing import Self
+
 from board_games.ticket2ride.actions import ActionType
 from board_games.ticket2ride.board import Board
 from board_games.ticket2ride.consts import LONGEST_PATH_POINTS
@@ -42,7 +45,9 @@ class PlayerScore:
     player_id: int
     route_points: int = 0
     ticket_points: int = 0
+    completed_tickets: int = 0
     longest_path_bonus: bool = False
+    longest_path: int = 0
 
     @property
     def total_points(self) -> int:
@@ -52,11 +57,26 @@ class PlayerScore:
             + (LONGEST_PATH_POINTS if self.longest_path_bonus else 0)
         )
 
+    @property
+    def sort_weight(self) -> tuple[int, int, int]:
+        return self.total_points, self.completed_tickets, self.longest_path
+
+    def __lt__(self, other: Self) -> bool:
+        return self.sort_weight < other.sort_weight
+
 
 @dataclass
 class Score:
     scorecard: list[PlayerScore]
     turn_score: PlayerScore
+
+    @cached_property
+    def winner_id(self) -> int:
+        winner_id = 0
+        for player_id, player_score in enumerate(self.scorecard):
+            if player_score > self.scorecard[winner_id]:
+                winner_id = player_id
+        return winner_id
 
 
 @dataclass

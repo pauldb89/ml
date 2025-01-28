@@ -17,6 +17,7 @@ class ActionType(StrEnum):
 class Action:
     player_id: int
     action_type: ActionType
+    class_id: int | None
 
 
 @dataclass(frozen=True)
