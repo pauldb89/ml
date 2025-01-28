@@ -1,5 +1,5 @@
 # Use `--test_output=erirors` for all test commands
-startup --output_base=/Users/pauldb/code/builds
+startup --output_base=/tmp/builds
 test --test_output=all
 build --enable_bzlmod
 build --symlink_prefix=/

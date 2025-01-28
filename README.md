@@ -1,6 +1,32 @@
 Toy ML projects.
 
+### Remote development
+
+We are currently using a linux based remote environment with all the cuda dependencies installed.
+
+Create a virtual environment:
+
+```shell
+mkdir ~/code/.venv
+virtualenv ~/code/.venv/ml
+source ~/code/.venv/ml/bin/activate
+pip install -r bazel_requirements.txt  # TODO(pauldb): Update this.
+```
+
+To run tests:
+```shell
+cd ~/code/ml
+PYTHONPATH=. pytest board_games/tests 
+```
+
+To run scripts:
+```shell
+PYTHONPATH=. python board_games/ticket2ride/scripts/simulate.py
+```
+
 ### Bazel
+
+TODO(pauldb): Get rid of this -- using bazel is annoying as fuck.
 
 These instructions assume `bazel 8.0.1` is installed.
 
