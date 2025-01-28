@@ -1,20 +1,24 @@
 import abc
 import collections
+import contextlib
 import copy
+import json
 import random
-from dataclasses import asdict
+import time
+from dataclasses import asdict, dataclass, field
+from typing import Generator
 
 import numpy as np
 import torch
 import wandb
 
-from board_games.ticket2ride.common import timer
 # from torch.cuda.amp import GradScaler
 
 from board_games.ticket2ride.environment import Environment, Roller
 from board_games.ticket2ride.model import Model, RawSample, Sample
 from board_games.ticket2ride.policies import Policy, UniformRandomPolicy, \
     ArgmaxModelPolicy, StochasticModelPolicy
+from board_games.ticket2ride.render_utils import print_state
 from board_games.ticket2ride.state import Transition
 
 
@@ -111,6 +115,29 @@ class MixedReward(Reward):
         return samples
 
 
+@dataclass
+class Tracker:
+    metrics: dict[str, list[float]] = field(default_factory=lambda: collections.defaultdict(list))
+
+    def log_value(self, metric_name: str, value: float) -> None:
+        self.metrics[metric_name].append(value)
+
+    @contextlib.contextmanager
+    def timer(self, metric) -> Generator[None, None, None]:
+        start_time = time.time()
+        yield
+        self.log_value(metric, time.time() - start_time)
+
+    def report(self) -> dict[str, float]:
+        metrics = {}
+        for key, value in self.metrics.items():
+            metrics[f"{key}_mean"] = np.mean(value).item()
+            metrics[f"{key}_sum"] = np.sum(value).item()
+
+        self.metrics = collections.defaultdict(list)
+        return metrics
+
+
 class PolicyGradientTrainer:
     def __init__(
         self,
@@ -137,15 +164,25 @@ class PolicyGradientTrainer:
 
     # TODO(pauldb): Maybe make this list[Policy] so we can take actions differently for different
     # players (e.g. using older policies).
-    def collect_episode(self, policy: Policy, epoch_id: int) -> dict[int, list[Sample]]:
+    def collect_episode(
+        self,
+        policy: Policy,
+        tracker: Tracker,
+        epoch_id: int,
+    ) -> dict[int, list[Sample]]:
         raw_samples = collections.defaultdict(list)
+
         # TODO(pauldb): Should we be sampling with a fixed seed?
         state = self.env.reset()
 
         while True:
             # TODO(pauldb): Does it make a difference if we cache the features and action index?
-            action = policy.choose_action(state)
-            transition = self.env.step(action)
+            with tracker.timer("t_policy_choose_action"):
+                action = policy.choose_action(state)
+
+            with tracker.timer("t_env_step"):
+                transition = self.env.step(action)
+
             raw_samples[state.player.id].append(RawSample(state, action, score=transition.score))
             state = transition.state
 
@@ -153,26 +190,32 @@ class PolicyGradientTrainer:
                 break
 
         samples = collections.defaultdict(list)
-        for player_id, player_raw_samples in raw_samples.items():
-            samples[player_id] = self.reward_fn.apply(
-                player_raw_samples, transition, epoch_id=epoch_id
-            )
+        with tracker.timer("t_compute_rewards"):
+            for player_id, player_raw_samples in raw_samples.items():
+                samples[player_id] = self.reward_fn.apply(
+                    player_raw_samples, transition, epoch_id=epoch_id
+                )
 
         return samples
 
-    def collect_samples(self, epoch_id: int) -> list[Sample]:
+    def collect_samples(self, tracker: Tracker, epoch_id: int) -> list[Sample]:
         self.model.eval()
         policy = StochasticModelPolicy(model=self.model)
 
         samples = []
         for _ in range(self.num_samples_per_epoch):
-            episode_samples = self.collect_episode(policy, epoch_id)
-            for player_samples in episode_samples.values():
-                samples.extend(player_samples)
+            with tracker.timer("t_collect_episode"):
+                episode_samples = self.collect_episode(policy, tracker, epoch_id)
+                for player_samples in episode_samples.values():
+                    samples.extend(player_samples)
+
+                print(f"Collected episode {json.dumps(tracker.report(), indent=2)}")
 
         return samples
 
     def train(self, samples: list[Sample], epoch_id: int) -> None:
+        self.model.train()
+
         num_batches = 0
         losses = []
         for start_index in range(0, len(samples), self.batch_size):
@@ -218,12 +261,13 @@ class PolicyGradientTrainer:
 
     def execute(self) -> None:
         for epoch_id in range(self.num_epochs):
-            with timer("t_collect_samples", step=epoch_id):
-                samples = self.collect_samples(epoch_id)
+            tracker = Tracker()
+            with tracker.timer("t_collect_samples"):
+                samples = self.collect_samples(tracker=tracker, epoch_id=epoch_id)
 
-            with timer("t_train", step=epoch_id):
+            with tracker.timer("t_train"):
                 self.train(samples, epoch_id=epoch_id)
 
             if epoch_id % self.evaluate_every_n_epochs == 0:
-                with timer("t_evaluate", step=epoch_id):
+                with tracker.timer("t_evaluate"):
                     self.evaluate(epoch_id=epoch_id)

@@ -161,7 +161,7 @@ class ModelPolicy(Policy):
             states=[state],
             head=ActionType.PLAN,
             mask=torch.tensor([mask]),
-        ).unsqueeze(0)
+        ).squeeze(0)
 
         class_id = self.classify(logits)
 
@@ -182,7 +182,7 @@ class ModelPolicy(Policy):
             states=[state],
             head=ActionType.DRAW_CARD,
             mask=torch.tensor([mask]),
-        ).unsqueeze(0)
+        ).squeeze(0)
 
         class_id = self.classify(logits)
 
@@ -202,7 +202,7 @@ class ModelPolicy(Policy):
             states=[state],
             head=ActionType.DRAW_TICKETS,
             mask=torch.tensor([mask]),
-        ).unsqueeze(0)
+        ).squeeze(0)
 
         class_id = self.classify(logits)
         combo = CHOOSE_TICKETS_CLASSES[class_id]
@@ -229,7 +229,7 @@ class ModelPolicy(Policy):
             states=[state],
             head=ActionType.BUILD_ROUTE,
             mask=torch.tensor([mask]),
-        ).unsqueeze(0)
+        ).squeeze(0)
 
         class_id = self.classify(logits)
         route, color = BUILD_ROUTE_CLASSES[class_id]
@@ -249,7 +249,7 @@ class ModelPolicy(Policy):
 
 class StochasticModelPolicy(ModelPolicy):
     def classify(self, logits: torch.Tensor) -> int:
-        return torch.distributions.Categorical(logits).sample().item()
+        return torch.distributions.Categorical(logits=logits).sample().item()
 
 
 class ArgmaxModelPolicy(ModelPolicy):
