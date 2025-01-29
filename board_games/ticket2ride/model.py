@@ -214,19 +214,20 @@ class Model(nn.Module):
         for sample in samples:
             grouped_samples[sample.state.next_action].append(sample)
 
-        logits = []
-        targets = []
+        losses = []
         weights = []
         for action_type, group in grouped_samples.items():
-            batch_features = []
+            states = []
+            targets = []
             for sample in group:
-                batch_features.append(self.featurize(sample.state))
+                states.append(sample.state)
                 weights.append(sample.reward)
-                print(sample.action)
                 assert sample.action.class_id is not None
                 targets.append(sample.action.class_id)
 
-            logits.append(self(batch_features, head=action_type))
+            logits = self(states, head=action_type)
+            targets = torch.tensor(targets, dtype=torch.long, device=self.device)
+            loss_terms = F.cross_entropy(logits, targets, reduction="none")
+            losses.append(loss_terms)
 
-        logits = torch.cat(logits, dim=0)
-        return F.cross_entropy(logits, torch.tensor(targets), torch.tensor(weights))
+        return (torch.cat(losses, dim=0) * torch.tensor(weights, device=self.device)).mean()

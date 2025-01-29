@@ -247,13 +247,11 @@ class Environment:
 class Roller:
     env: Environment
     policies: list[Policy]
-    action_log: list[Action]
 
     def __init__(self, env: Environment, policies: list[Policy]):
         assert MIN_PLAYERS <= len(policies) <= MAX_PLAYERS
         self.env = env
         self.policies = policies
-        self.action_log = []
 
     def run(self, verbose: bool = False) -> GameStats:
         initial_state = state = self.env.reset()
@@ -267,7 +265,6 @@ class Roller:
                     colored(f"Action turn {state.turn_id}: ", color="green", attrs=["bold"])
                     + str(action)
                 )
-            self.action_log.append(action)
 
             transition = self.env.step(action)
             state = transition.state
