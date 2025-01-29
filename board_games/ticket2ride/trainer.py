@@ -2,7 +2,6 @@ import abc
 import collections
 import contextlib
 import copy
-import json
 import random
 import time
 from dataclasses import asdict, dataclass, field
@@ -10,6 +9,7 @@ from typing import Generator
 
 import numpy as np
 import torch
+import tqdm
 import wandb
 
 # from torch.cuda.amp import GradScaler
@@ -18,7 +18,6 @@ from board_games.ticket2ride.environment import Environment, Roller
 from board_games.ticket2ride.model import Model, RawSample, Sample
 from board_games.ticket2ride.policies import Policy, UniformRandomPolicy, \
     ArgmaxModelPolicy, StochasticModelPolicy
-from board_games.ticket2ride.render_utils import print_state
 from board_games.ticket2ride.state import Transition
 
 
@@ -50,7 +49,14 @@ class PointsReward(Reward):
         reward = 0
         for raw_sample in reversed(raw_samples):
             reward = self.discount * reward + raw_sample.score.turn_score.total_points
-            samples.append(Sample(reward=reward, **asdict(raw_sample)))
+            samples.append(
+                Sample(
+                    state=raw_sample.state,
+                    action=raw_sample.action,
+                    score=raw_sample.score,
+                    reward=reward,
+                )
+            )
 
         return list(reversed(samples))
 
@@ -73,10 +79,24 @@ class WinReward(Reward):
         else:
             reward = -self.reward
 
-        samples = [Sample(reward=reward, **asdict(last_sample))]
+        samples = [
+            Sample(
+                state=last_sample.state,
+                action=last_sample.action,
+                score=last_sample.score,
+                reward=reward,
+            )
+        ]
         for raw_sample in reversed(raw_samples[:-1]):
             reward = self.discount * reward
-            samples.append(Sample(reward=reward, **asdict(raw_sample)))
+            samples.append(
+                Sample(
+                    state=raw_sample.state,
+                    action=raw_sample.action,
+                    score=raw_sample.score,
+                    reward=reward,
+                )
+            )
 
         return list(reversed(samples))
 
@@ -109,7 +129,12 @@ class MixedReward(Reward):
 
             alpha = epoch_id / (self.num_epochs - 1)
             reward = initial_sample.reward * (1 - alpha) + final_sample.reward * alpha
-            sample = Sample(reward=reward, **asdict(initial_sample))
+            sample = Sample(
+                state=initial_sample.state,
+                action=initial_sample.action,
+                score=initial_sample.score,
+                reward=reward,
+            )
             samples.append(sample)
 
         return samples
@@ -203,13 +228,11 @@ class PolicyGradientTrainer:
         policy = StochasticModelPolicy(model=self.model)
 
         samples = []
-        for _ in range(self.num_samples_per_epoch):
+        for _ in tqdm.tqdm(range(self.num_samples_per_epoch)):
             with tracker.timer("t_collect_episode"):
                 episode_samples = self.collect_episode(policy, tracker, epoch_id)
                 for player_samples in episode_samples.values():
                     samples.extend(player_samples)
-
-                print(f"Collected episode {json.dumps(tracker.report(), indent=2)}")
 
         return samples
 

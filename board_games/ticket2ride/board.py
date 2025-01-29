@@ -34,14 +34,6 @@ class Board:
         self.reveal_cards()
 
     def reveal_cards(self) -> None:
-        remaining_regular_cards = self.card_deck.remaining_regular_cards
-        for card in self.visible_cards:
-            if card.color != ANY:
-                remaining_regular_cards += 1
-
-        if remaining_regular_cards < consts.NUM_VISIBLE_CARDS - consts.MAX_VISIBLE_ANY_CARDS:
-            raise InvalidGameStateError("Insufficient regular cards left")
-
         while True:
             while len(self.card_deck) > 0 and len(self.visible_cards) < NUM_VISIBLE_CARDS:
                 self.visible_cards.append(self.card_deck.draw())
@@ -52,6 +44,13 @@ class Board:
                     num_visible_any_cards += 1
 
             if num_visible_any_cards > MAX_VISIBLE_ANY_CARDS:
+                remaining_regular_cards = (
+                    self.card_deck.remaining_regular_cards
+                    + len(self.visible_cards) - num_visible_any_cards
+                )
+                if remaining_regular_cards < consts.NUM_VISIBLE_CARDS - consts.MAX_VISIBLE_ANY_CARDS:
+                    raise InvalidGameStateError("Insufficient regular cards left")
+
                 for card in self.visible_cards:
                     self.card_deck.discard(card)
                 self.visible_cards = []

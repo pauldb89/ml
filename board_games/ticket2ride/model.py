@@ -10,7 +10,7 @@ from board_games.ticket2ride.action_utils import PLAN_CLASSES, DRAW_CARD_CLASSES
     CHOOSE_TICKETS_CLASSES, BUILD_ROUTE_CLASSES
 from board_games.ticket2ride.actions import ActionType, Action
 from board_games.ticket2ride.features import FEATURE_REGISTRY, FeatureType, \
-    Extractor, Features
+    Extractor, Features, BatchFeatures
 from board_games.ticket2ride.state import ObservedState, Score
 
 
@@ -24,6 +24,51 @@ class RawSample:
 @dataclass
 class Sample(RawSample):
     reward: float
+
+
+class EmbeddingTable(nn.Module):
+    def __init__(self, device: torch.device, extractors: list[Extractor], dim: int) -> None:
+        super().__init__()
+
+        self.extractors = extractors
+        self.device = device
+
+        self.offsets = {}
+        size = 1
+        for extractor in extractors:
+            for feature_type in extractor.feature_types:
+                if feature_type not in self.offsets:
+                    self.offsets[feature_type] = size
+                    size += FEATURE_REGISTRY[feature_type].cardinality
+
+        self.embeddings = nn.Embedding(size, dim, padding_idx=0)
+
+        self.to(device)
+
+    def featurize(self, states: list[ObservedState]) -> BatchFeatures:
+        batch_features = []
+        for state in states:
+            features = []
+            for extractor in self.extractors:
+                features.extend(extractor.extract(state))
+            batch_features.append(features)
+
+        return batch_features
+
+    def compute_indices(self, batch_features: BatchFeatures) -> torch.Tensor:
+        batch_indices = []
+        for features in batch_features:
+            indices = []
+            for feature in features:
+                indices.append(self.offsets[feature.type] + feature.value)
+            batch_indices.append(torch.tensor(indices, device=self.device))
+
+        return torch.nn.utils.rnn.pad_sequence(batch_indices, batch_first=True, padding_value=0)
+
+    def forward(self, states: list[ObservedState]) -> tuple[torch.Tensor, torch.Tensor]:
+        features = self.featurize(states)
+        indices = self.compute_indices(features)
+        return self.embeddings(indices), torch.ne(indices, 0)
 
 
 class Residual(nn.Module):
@@ -47,7 +92,7 @@ class RelativeSelfAttention(nn.Module):
         self.to_qkv = nn.Linear(dim, 3 * dim)
         self.scalar_norm = math.sqrt(dim / heads)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
         b, s, d = x.size()
         qkv = self.to_qkv(x).view(b, s, self.heads, -1)
 
@@ -63,7 +108,11 @@ class RelativeSelfAttention(nn.Module):
 
         content_scores = torch.einsum("bhik,bhjk->bhij", queries, keys) / self.scalar_norm
         position_scores = torch.gather(self.rel_proj(queries), dim=-1, index=offsets)
-        attention = torch.softmax(content_scores + position_scores, dim=-1)
+        scores = content_scores + position_scores
+
+        scores = scores.masked_fill(~mask.view(b, 1, 1, s), float("-inf"))
+        scores = scores.masked_fill(~mask.view(b, 1, s, 1), float("-inf"))
+        attention = torch.softmax(scores, dim=-1)
 
         ret = torch.einsum("bhij,bhjk->bhik", attention, values)
         return ret.permute(dims=[0, 2, 1, 3]).reshape(b, s, d)
@@ -73,16 +122,12 @@ class TransformerBlock(nn.Module):
     def __init__(self, dim: int, heads: int, rel_window: int, rel_proj: nn.Linear) -> None:
         super().__init__()
 
-        self.attention_block = Residual(
-            module=nn.Sequential(
-                nn.LayerNorm(dim, eps=1e-6),
-                RelativeSelfAttention(
-                    dim=dim,
-                    heads=heads,
-                    rel_window=rel_window,
-                    rel_proj=rel_proj,
-                ),
-            )
+        self.attn_ln = nn.LayerNorm(dim, eps=1e-6)
+        self.attn = RelativeSelfAttention(
+            dim=dim,
+            heads=heads,
+            rel_window=rel_window,
+            rel_proj=rel_proj,
         )
 
         self.mlp_block = Residual(
@@ -94,13 +139,15 @@ class TransformerBlock(nn.Module):
             )
         )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.mlp_block(self.attention_block(x))
+    def forward(self, x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+        x = x + self.attn(self.attn_ln(x), mask)
+        return self.mlp_block(x)
 
 
 class Model(nn.Module):
     def __init__(
         self,
+        device: torch.device,
         extractors: list[Extractor],
         layers: int,
         dim: int,
@@ -109,16 +156,11 @@ class Model(nn.Module):
     ) -> None:
         super().__init__()
 
+        self.device = device
         self.extractors = extractors
 
         self.feature_index: dict[FeatureType, int] = {}
-        self.embeddings = nn.ModuleList()
-        for extractor in self.extractors:
-            for feature_type in extractor.feature_types:
-                if feature_type not in self.feature_index:
-                    self.feature_index[feature_type] = len(self.feature_index)
-                    feature = FEATURE_REGISTRY[feature_type]
-                    self.embeddings.append(nn.Embedding(feature.cardinality, dim))
+        self.embeddings = EmbeddingTable(device, extractors, dim)
 
         assert (
             dim % heads == 0
@@ -129,7 +171,7 @@ class Model(nn.Module):
             TransformerBlock(dim=dim, heads=heads, rel_window=rel_window, rel_proj=rel_proj)
             for _ in range(layers)
         ]
-        self.blocks = nn.Sequential(*blocks)
+        self.blocks = nn.ModuleList(blocks)
 
         self.norm = nn.LayerNorm(dim, eps=1e-6)
 
@@ -139,6 +181,8 @@ class Model(nn.Module):
             ActionType.DRAW_TICKETS: nn.Linear(dim, len(CHOOSE_TICKETS_CLASSES)),
             ActionType.BUILD_ROUTE: nn.Linear(dim, len(BUILD_ROUTE_CLASSES)),
         })
+
+        self.to(device)
 
     def featurize(self, state: ObservedState) -> Features:
         features = []
@@ -153,19 +197,17 @@ class Model(nn.Module):
         head: ActionType,
         mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        batch_seq = []
-        for state in states:
-            seq = []
-            for feature in self.featurize(state):
-                embeddings = self.embeddings[self.feature_index[feature.type]]
-                seq.append(embeddings(torch.LongTensor([feature.value])))
-            batch_seq.append(torch.cat(seq, dim=0))
+        x, seq_mask = self.embeddings(states)
+        for block in self.blocks:
+            x = block(x, seq_mask)
 
-        x = torch.stack(batch_seq, dim=0)
-        x = self.blocks(x)
         x = self.norm(x)[:, 0, :]
         logits = self.heads[head](x)
-        return logits if mask is None else logits.masked_fill(mask == 0, value=float("-inf"))
+
+        if mask is None:
+            return logits
+
+        return logits.masked_fill(mask.to(self.device) == 0, value=float("-inf"))
 
     def loss(self, samples: list[Sample]) -> torch.Tensor:
         grouped_samples = collections.defaultdict(list)
@@ -180,8 +222,9 @@ class Model(nn.Module):
             for sample in group:
                 batch_features.append(self.featurize(sample.state))
                 weights.append(sample.reward)
-                assert sample.action.class_index is not None
-                targets.append(sample.action.class_index)
+                print(sample.action)
+                assert sample.action.class_id is not None
+                targets.append(sample.action.class_id)
 
             logits.append(self(batch_features, head=action_type))
 

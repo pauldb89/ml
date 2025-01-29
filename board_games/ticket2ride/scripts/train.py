@@ -1,5 +1,7 @@
+import random
 from argparse import ArgumentParser
 
+import numpy as np
 import torch
 import wandb
 
@@ -16,7 +18,7 @@ def main() -> None:
     parser.add_argument("--epochs", type=int, default=2, help="Number of epochs")
     parser.add_argument("--batch_size", type=int, default=32, help="Batch size")
     parser.add_argument(
-        "--num_samples_per_epoch", type=int, default=100, help="Number of samples per epoch"
+        "--num_samples_per_epoch", type=int, default=32, help="Number of samples per epoch"
     )
     parser.add_argument(
         "--evaluate_every_n_epochs", type=int, default=5, help="Evaluate every n epochs"
@@ -29,10 +31,17 @@ def main() -> None:
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
     args = parser.parse_args()
 
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    torch.cuda.manual_seed(args.seed)
+    torch.cuda.manual_seed_all(args.seed)
+
     wandb.init(project="board_games")
     wandb.config.update(args)
 
     model = Model(
+        device=torch.device("cuda" if torch.cuda.is_available() else "cpu"),
         extractors=ALL_EXTRACTORS,
         dim=args.dim,
         layers=args.layers,
