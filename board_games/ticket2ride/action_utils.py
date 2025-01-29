@@ -1,6 +1,7 @@
 import itertools
 
 from board_games.ticket2ride.actions import ActionType
+from board_games.ticket2ride.board import Board
 from board_games.ticket2ride.card import Card
 from board_games.ticket2ride.color import ANY, COLORS, EXTENDED_COLORS, Color
 from board_games.ticket2ride.route import ROUTES, Route
@@ -26,16 +27,16 @@ def get_valid_actions(state: ObservedState) -> list[ActionType]:
     return valid_action_types
 
 
-def get_draw_card_options(state: ObservedState) -> list[Card | None]:
+def get_draw_card_options(board: Board, consecutive_card_draws: int) -> list[Card | None]:
     card_options: list[Card | None] = []
-    if len(state.board.card_deck) >= 1:
+    if len(board.card_deck) >= 1:
         card_options.append(None)
 
-    for card in state.board.visible_cards:
+    for card in board.visible_cards:
         if card in card_options:
             continue
 
-        if card.color == ANY and state.consecutive_card_draws > 0:
+        if card.color == ANY and consecutive_card_draws > 0:
             continue
 
         card_options.append(card)

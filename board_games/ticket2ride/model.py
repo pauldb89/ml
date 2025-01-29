@@ -103,15 +103,16 @@ class RelativeSelfAttention(nn.Module):
         values = torch.permute(values, dims=[0, 2, 1, 3])
 
         offsets = (
-              torch.arange(s, device=x.device).unsqueeze(dim=0) - torch.arange(s, device=x.device).unsqueeze(dim=1)
-        ).clamp(min=-self.rel_window, max=self.rel_window).repeat(b, self.heads, 1, 1) + self.rel_window
+              torch.arange(s, device=x.device).unsqueeze(dim=0)
+              - torch.arange(s, device=x.device).unsqueeze(dim=1)
+        ).clamp(min=-self.rel_window, max=self.rel_window) + self.rel_window
+        offsets = offsets.repeat(b, self.heads, 1, 1)
 
         content_scores = torch.einsum("bhik,bhjk->bhij", queries, keys) / self.scalar_norm
         position_scores = torch.gather(self.rel_proj(queries), dim=-1, index=offsets)
         scores = content_scores + position_scores
 
         scores = scores.masked_fill(~mask.view(b, 1, 1, s), float("-inf"))
-        scores = scores.masked_fill(~mask.view(b, 1, s, 1), float("-inf"))
         attention = torch.softmax(scores, dim=-1)
 
         ret = torch.einsum("bhij,bhjk->bhik", attention, values)

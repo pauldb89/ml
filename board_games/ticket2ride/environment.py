@@ -2,6 +2,7 @@ from dataclasses import dataclass
 
 from termcolor import colored
 
+from board_games.ticket2ride.action_utils import get_draw_card_options
 from board_games.ticket2ride.actions import (
     Action,
     ActionType,
@@ -208,7 +209,11 @@ class Environment:
             player.card_counts[card.color] += 1
             self.consecutive_card_draws += 1
 
-            if (action.card is None or card.color != ANY) and self.consecutive_card_draws <= 1:
+            if (
+                self.consecutive_card_draws <= 1
+                and (action.card is None or card.color != ANY)
+                and get_draw_card_options(self.board, self.consecutive_card_draws)
+            ):
                 return self.transition(next_action_type=ActionType.DRAW_CARD)
             else:
                 return self.transition(next_action_type=ActionType.PLAN)

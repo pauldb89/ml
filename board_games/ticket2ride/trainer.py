@@ -4,15 +4,15 @@ import contextlib
 import copy
 import random
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from typing import Generator
 
+import neptune
 import numpy as np
 import torch
 import tqdm
-import wandb
 
-# from torch.cuda.amp import GradScaler
+from torch.cuda.amp import GradScaler
 
 from board_games.ticket2ride.environment import Environment, Roller
 from board_games.ticket2ride.model import Model, RawSample, Sample
@@ -159,7 +159,6 @@ class Tracker:
             metrics[f"{key}_mean"] = np.mean(value).item()
             metrics[f"{key}_sum"] = np.sum(value).item()
 
-        self.metrics = collections.defaultdict(list)
         return metrics
 
 
@@ -184,8 +183,7 @@ class PolicyGradientTrainer:
         self.evaluate_every_n_epochs = evaluate_every_n_epochs
         self.reward_fn = reward_fn
 
-        # TODO(pauldb): Enable mixed precision training with GradScaler after switching to gpu.
-        # self.scaler = GradScaler()
+        self.scaler = GradScaler()
 
     # TODO(pauldb): Maybe make this list[Policy] so we can take actions differently for different
     # players (e.g. using older policies).
@@ -236,61 +234,57 @@ class PolicyGradientTrainer:
 
         return samples
 
-    def train(self, samples: list[Sample], epoch_id: int) -> None:
+    def train(self, samples: list[Sample], tracker: Tracker) -> None:
         self.model.train()
 
         num_batches = 0
-        losses = []
         for start_index in range(0, len(samples), self.batch_size):
             if start_index + self.batch_size <= len(samples):
                 num_batches += 1
                 batch_samples = samples[start_index:start_index + self.batch_size]
 
                 self.optimizer.zero_grad()
-                loss = self.model.loss(batch_samples)
-                losses.append(loss.item())
+                with torch.cuda.amp.autocast():
+                    loss = self.model.loss(batch_samples)
+
+                assert torch.isnan(loss).sum() == 0
+
+                tracker.log_value("loss", loss.item())
+
+                loss = self.scaler.scale(loss)
                 loss.backward()
-                self.optimizer.step()
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
 
-        wandb.log(
-            {"loss": np.mean(losses), "num_batches": num_batches},
-            step=epoch_id,
-        )
+    def evaluate(self, tracker: Tracker) -> None:
+        self.model.eval()
 
-    def evaluate(self, epoch_id: int) -> None:
         model_policy = ArgmaxModelPolicy(model=self.model)
         random_policies = [UniformRandomPolicy() for _ in range(self.env.num_players - 1)]
 
-        wins = []
-        total_points = []
         for _ in range(self.num_samples_per_epoch):
             index = random.randint(0, len(random_policies) - 1)
             policies: list[Policy] = copy.deepcopy(random_policies)
             policies.insert(index, model_policy)
             roller = Roller(env=self.env, policies=policies)
-            stats = roller.run()
+            stats = roller.run(verbose=True)
 
             score = stats.transitions[-1].score
-            wins.append(score.winner_id == index)
-            total_points.append(score.scorecard[index].total_points)
+            tracker.log_value("eval/total_points", score.scorecard[index].total_points)
+            tracker.log_value("eval/wins", score.winner_id == index)
 
-        wandb.log(
-            data={
-                "vs_random.wins": np.mean(wins),
-                "vs_random.total_points": np.mean(total_points),
-            },
-            step=epoch_id,
-        )
-
-    def execute(self) -> None:
+    def execute(self, run: neptune.Run) -> None:
         for epoch_id in range(self.num_epochs):
             tracker = Tracker()
             with tracker.timer("t_collect_samples"):
                 samples = self.collect_samples(tracker=tracker, epoch_id=epoch_id)
 
             with tracker.timer("t_train"):
-                self.train(samples, epoch_id=epoch_id)
+                self.train(samples=samples, tracker=tracker)
 
             if epoch_id % self.evaluate_every_n_epochs == 0:
                 with tracker.timer("t_evaluate"):
-                    self.evaluate(epoch_id=epoch_id)
+                    self.evaluate(tracker)
+
+            for key, value in tracker.report().items():
+                run[key].append(value, step=epoch_id)

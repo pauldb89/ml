@@ -65,7 +65,7 @@ class UniformRandomPolicy(Policy):
         )
 
     def draw_card(self, state: ObservedState) -> DrawCard:
-        card_options = get_draw_card_options(state)
+        card_options = get_draw_card_options(state.board, state.consecutive_card_draws)
         return DrawCard(
             player_id=state.player.id,
             action_type=ActionType.DRAW_CARD,
@@ -108,7 +108,7 @@ class KeyboardInputPolicy(Policy):
 
     def draw_card(self, state: ObservedState) -> DrawCard:
         print_state(state)
-        draw_options = get_draw_card_options(state)
+        draw_options = get_draw_card_options(state.board, state.consecutive_card_draws)
         return DrawCard(
             player_id=state.player.id,
             action_type=ActionType.DRAW_CARD,
@@ -173,7 +173,7 @@ class ModelPolicy(Policy):
         )
 
     def draw_card(self, state: ObservedState) -> DrawCard:
-        draw_options = get_draw_card_options(state)
+        draw_options = get_draw_card_options(state.board, state.consecutive_card_draws)
         mask = []
         for cls in DRAW_CARD_CLASSES:
             mask.append(int(cls in draw_options))

@@ -21,10 +21,11 @@ class Separator(enum.IntEnum):
     PLAYER_ID = 3
     TRAIN_CARS = 4
     VISIBLE_CARDS = 5
-    OWNED_ROUTES = 6
-    AVAILABLE_ROUTES = 7
-    OWNED_TICKETS = 8
-    DRAWN_TICKETS = 9
+    OWNED_CARDS = 6
+    OWNED_ROUTES = 7
+    AVAILABLE_ROUTES = 8
+    OWNED_TICKETS = 9
+    DRAWN_TICKETS = 10
 
 
 class FeatureType(enum.IntEnum):
@@ -131,6 +132,20 @@ class VisibleCardsExtractor(Extractor):
         features = [FeatureValue(type=FeatureType.SEPARATOR, value=Separator.VISIBLE_CARDS.value)]
         for card in state.board.visible_cards:
             features.append(FeatureValue(type=FeatureType.COLOR, value=card.color.id))
+
+        return features
+
+
+class OwnedCardsExtractor(Extractor):
+    @property
+    def feature_types(self) -> list[FeatureType]:
+        return [FeatureType.SEPARATOR, FeatureType.COLOR]
+
+    def extract(self, state: ObservedState) -> Features:
+        features = [FeatureValue(type=FeatureType.SEPARATOR, value=Separator.OWNED_CARDS.value)]
+        for color, count in state.player.card_counts.items():
+            for _ in range(count):
+                features.append(FeatureValue(type=FeatureType.COLOR, value=color.id))
 
         return features
 
@@ -244,6 +259,7 @@ ALL_EXTRACTORS: list[Extractor] = [
     PlayerIdExtractor(),
     TrainCarsExtractor(),
     VisibleCardsExtractor(),
+    OwnedCardsExtractor(),
     RouteOwnershipExtractor(),
     OwnedTicketsExtractor(),
     DrawnTicketsExtractor(),
