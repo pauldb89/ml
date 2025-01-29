@@ -1,24 +1,21 @@
 import abc
 import collections
-import contextlib
 import copy
 import random
-import time
-from dataclasses import dataclass, field
-from typing import Generator
 
 import neptune
-import numpy as np
 import torch
 import tqdm
 
 from torch.cuda.amp import GradScaler
 
+from board_games.ticket2ride.board import InvalidGameStateError
 from board_games.ticket2ride.environment import Environment, Roller
 from board_games.ticket2ride.model import Model, RawSample, Sample
 from board_games.ticket2ride.policies import Policy, UniformRandomPolicy, \
     ArgmaxModelPolicy, StochasticModelPolicy
 from board_games.ticket2ride.state import Transition
+from board_games.ticket2ride.tracker import Tracker
 
 
 class Reward(abc.ABC):
@@ -140,28 +137,6 @@ class MixedReward(Reward):
         return samples
 
 
-@dataclass
-class Tracker:
-    metrics: dict[str, list[float]] = field(default_factory=lambda: collections.defaultdict(list))
-
-    def log_value(self, metric_name: str, value: float) -> None:
-        self.metrics[metric_name].append(value)
-
-    @contextlib.contextmanager
-    def timer(self, metric) -> Generator[None, None, None]:
-        start_time = time.time()
-        yield
-        self.log_value(metric, time.time() - start_time)
-
-    def report(self) -> dict[str, float]:
-        metrics = {}
-        for key, value in self.metrics.items():
-            metrics[f"{key}_mean"] = np.mean(value).item()
-            metrics[f"{key}_sum"] = np.sum(value).item()
-
-        return metrics
-
-
 class PolicyGradientTrainer:
     def __init__(
         self,
@@ -199,7 +174,6 @@ class PolicyGradientTrainer:
         state = self.env.reset()
 
         while True:
-            # TODO(pauldb): Does it make a difference if we cache the features and action index?
             with tracker.timer("t_policy_choose_action"):
                 action = policy.choose_action(state)
 
@@ -226,11 +200,17 @@ class PolicyGradientTrainer:
         policy = StochasticModelPolicy(model=self.model)
 
         samples = []
+        num_invalid_episodes = 0
         for _ in tqdm.tqdm(range(self.num_samples_per_epoch)):
-            with tracker.timer("t_collect_episode"):
-                episode_samples = self.collect_episode(policy, tracker, epoch_id)
-                for player_samples in episode_samples.values():
-                    samples.extend(player_samples)
+            with tracker.timer("t_episode"):
+                try:
+                    episode_samples = self.collect_episode(policy, tracker, epoch_id)
+                    for player_samples in episode_samples.values():
+                        samples.extend(player_samples)
+                except InvalidGameStateError:
+                    num_invalid_episodes += 1
+
+        tracker.log_value("invalid_episodes", num_invalid_episodes)
 
         return samples
 
@@ -256,35 +236,49 @@ class PolicyGradientTrainer:
                 self.scaler.step(self.optimizer)
                 self.scaler.update()
 
+            tracker.log_value("num_batches", num_batches)
+
     def evaluate(self, tracker: Tracker) -> None:
         self.model.eval()
 
         model_policy = ArgmaxModelPolicy(model=self.model)
         random_policies = [UniformRandomPolicy() for _ in range(self.env.num_players - 1)]
 
-        for _ in range(self.num_samples_per_epoch):
-            index = random.randint(0, len(random_policies) - 1)
-            policies: list[Policy] = copy.deepcopy(random_policies)
-            policies.insert(index, model_policy)
-            roller = Roller(env=self.env, policies=policies)
-            stats = roller.run(verbose=True)
+        with tracker.scope("vs_random"):
+            for _ in range(self.num_samples_per_epoch):
+                index = random.randint(0, len(random_policies) - 1)
+                policies: list[Policy] = copy.deepcopy(random_policies)
+                policies.insert(index, model_policy)
+                roller = Roller(env=self.env, policies=policies)
+                stats = roller.run()
 
-            score = stats.transitions[-1].score
-            tracker.log_value("eval/total_points", score.scorecard[index].total_points)
-            tracker.log_value("eval/wins", score.winner_id == index)
+                score = stats.transitions[-1].score
+                tracker.log_value("total_points", score.scorecard[index].total_points)
+                tracker.log_value("wins", score.winner_id == index)
 
     def execute(self, run: neptune.Run) -> None:
         for epoch_id in range(self.num_epochs):
             tracker = Tracker()
-            with tracker.timer("t_collect_samples"):
-                samples = self.collect_samples(tracker=tracker, epoch_id=epoch_id)
+            with tracker.timer("t_overall"):
+                with tracker.scope("collect_samples"):
+                    with tracker.timer("t_overall"):
+                        samples = self.collect_samples(tracker=tracker, epoch_id=epoch_id)
 
-            with tracker.timer("t_train"):
-                self.train(samples=samples, tracker=tracker)
+                with tracker.scope("train"):
+                    with tracker.timer("t_overall"):
+                        self.train(samples=samples, tracker=tracker)
 
-            if epoch_id % self.evaluate_every_n_epochs == 0:
-                with tracker.timer("t_evaluate"):
-                    self.evaluate(tracker)
+                if epoch_id % self.evaluate_every_n_epochs == 0:
+                    with tracker.scope("eval"):
+                        with tracker.timer("t_overall"):
+                            self.evaluate(tracker)
 
-            for key, value in tracker.report().items():
+            metrics = tracker.report()
+            for key, value in metrics.items():
                 run[key].append(value, step=epoch_id)
+
+            print(metrics["collect_samples/invalid_episodes_sum"])
+            print(
+                f"Epoch {epoch_id}: Loss {metrics['train/loss_mean']}, "
+                f"Total time {metrics['t_overall_mean']}"
+            )
