@@ -1,6 +1,7 @@
 import abc
 import collections
 import copy
+import json
 import random
 
 import neptune
@@ -9,7 +10,6 @@ import tqdm
 
 from torch.cuda.amp import GradScaler
 
-from board_games.ticket2ride.board import InvalidGameStateError
 from board_games.ticket2ride.environment import Environment, Roller
 from board_games.ticket2ride.model import Model, RawSample, Sample
 from board_games.ticket2ride.policies import Policy, UniformRandomPolicy, \
@@ -200,17 +200,11 @@ class PolicyGradientTrainer:
         policy = StochasticModelPolicy(model=self.model)
 
         samples = []
-        num_invalid_episodes = 0
-        for _ in tqdm.tqdm(range(self.num_samples_per_epoch)):
+        for _ in tqdm.tqdm(range(self.num_samples_per_epoch), desc="Sample collection"):
             with tracker.timer("t_episode"):
-                try:
-                    episode_samples = self.collect_episode(policy, tracker, epoch_id)
-                    for player_samples in episode_samples.values():
-                        samples.extend(player_samples)
-                except InvalidGameStateError:
-                    num_invalid_episodes += 1
-
-        tracker.log_value("invalid_episodes", num_invalid_episodes)
+                episode_samples = self.collect_episode(policy, tracker, epoch_id)
+                for player_samples in episode_samples.values():
+                    samples.extend(player_samples)
 
         return samples
 
@@ -218,7 +212,7 @@ class PolicyGradientTrainer:
         self.model.train()
 
         num_batches = 0
-        for start_index in range(0, len(samples), self.batch_size):
+        for start_index in tqdm.tqdm(range(0, len(samples), self.batch_size), desc="Train step"):
             if start_index + self.batch_size <= len(samples):
                 num_batches += 1
                 batch_samples = samples[start_index:start_index + self.batch_size]
@@ -245,7 +239,7 @@ class PolicyGradientTrainer:
         random_policies = [UniformRandomPolicy() for _ in range(self.env.num_players - 1)]
 
         with tracker.scope("vs_random"):
-            for _ in range(self.num_samples_per_epoch):
+            for _ in tqdm.tqdm(range(self.num_samples_per_epoch), desc="Eval step"):
                 index = random.randint(0, len(random_policies) - 1)
                 policies: list[Policy] = copy.deepcopy(random_policies)
                 policies.insert(index, model_policy)
@@ -253,8 +247,14 @@ class PolicyGradientTrainer:
                 stats = roller.run()
 
                 score = stats.transitions[-1].score
-                tracker.log_value("total_points", score.scorecard[index].total_points)
+                policy_score = score.scorecard[index]
                 tracker.log_value("wins", score.winner_id == index)
+                tracker.log_value("total_points", policy_score.total_points)
+                tracker.log_value("total_tickets", policy_score.total_tickets)
+                tracker.log_value("completed_tickets", policy_score.completed_tickets)
+                tracker.log_value("ticket_points", policy_score.ticket_points)
+                tracker.log_value("route_points", policy_score.route_points)
+                tracker.log_value("longest_path_bonus", policy_score.longest_path_bonus)
 
     def execute(self, run: neptune.Run) -> None:
         for epoch_id in range(self.num_epochs):
@@ -262,23 +262,29 @@ class PolicyGradientTrainer:
             with tracker.timer("t_overall"):
                 with tracker.scope("collect_samples"):
                     with tracker.timer("t_overall"):
-                        samples = self.collect_samples(tracker=tracker, epoch_id=epoch_id)
+                        with torch.no_grad():
+                            samples = self.collect_samples(tracker=tracker, epoch_id=epoch_id)
 
                 with tracker.scope("train"):
                     with tracker.timer("t_overall"):
                         self.train(samples=samples, tracker=tracker)
 
-                if epoch_id % self.evaluate_every_n_epochs == 0:
+                if epoch_id % self.evaluate_every_n_epochs == 0 or epoch_id == self.num_epochs - 1:
                     with tracker.scope("eval"):
                         with tracker.timer("t_overall"):
-                            self.evaluate(tracker)
+                            with torch.no_grad():
+                                self.evaluate(tracker)
 
             metrics = tracker.report()
+            eval_metrics = {}
             for key, value in metrics.items():
                 run[key].append(value, step=epoch_id)
+                if key.startswith("eval/vs_random") and key.endswith("mean"):
+                    eval_metrics[key] = value
 
-            print(metrics["collect_samples/invalid_episodes_sum"])
             print(
-                f"Epoch {epoch_id}: Loss {metrics['train/loss_mean']}, "
-                f"Total time {metrics['t_overall_mean']}"
+                f"Epoch: {epoch_id}, Loss: {metrics['train/loss_mean']}, "
+                f"Total time: {metrics['t_overall_mean']} seconds"
             )
+            if epoch_id % self.evaluate_every_n_epochs == 0 or epoch_id == self.num_epochs - 1:
+                print(f"Eval metrics: {json.dumps(eval_metrics, indent=2)}")

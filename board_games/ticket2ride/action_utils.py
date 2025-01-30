@@ -24,6 +24,11 @@ def get_valid_actions(state: ObservedState) -> list[ActionType]:
         if len(build_route_options) > 0:
             valid_action_types.append(ActionType.BUILD_ROUTE)
 
+    # If the player has no valid actions, they are forced to skip a turn. Setting action_type
+    # to PLAN will pass the turn to the next player.
+    if not valid_action_types:
+        valid_action_types.append(ActionType.PLAN)
+
     return valid_action_types
 
 
@@ -117,6 +122,7 @@ PLAN_CLASSES: list[ActionType] = [
     ActionType.DRAW_CARD,
     ActionType.DRAW_TICKETS,
     ActionType.BUILD_ROUTE,
+    ActionType.PLAN,
 ]
 DRAW_CARD_CLASSES = generate_card_classes()
 CHOOSE_TICKETS_CLASSES = generate_choose_ticket_classes()

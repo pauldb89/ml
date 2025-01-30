@@ -38,6 +38,7 @@ def render_ticket(ticket: Ticket, connected: bool) -> str:
 
 
 def print_player(board: Board, player: Player) -> None:
+    print(colored(f"Player {player.id} information:", color="red", attrs=["bold"]))
     print(colored("Cards in hand:", attrs=["bold"]))
     for color, num_cards in player.card_counts.items():
         print(f"  {color}: {num_cards} cards")
@@ -58,6 +59,7 @@ def print_player(board: Board, player: Player) -> None:
 
 
 def print_board(board: Board) -> None:
+    print(colored("Board information:", color="red", attrs=["bold"]))
     print(colored("Visible cards: ", attrs=["bold"]) + render_cards(board.visible_cards))
     print(colored("Owned routes:", attrs=["bold"]))
     for route_info in board.route_ownership.values():
@@ -67,9 +69,7 @@ def print_board(board: Board) -> None:
 
 def print_state(state: ObservedState) -> None:
     print()
-    print(colored("Board information:", color="red", attrs=["bold"]))
     print_board(state.board)
-    print(colored("Player information:", color="red", attrs=["bold"]))
     print_player(board=state.board, player=state.player)
     print()
     print()

@@ -45,6 +45,7 @@ class PlayerScore:
     player_id: int
     route_points: int = 0
     ticket_points: int = 0
+    total_tickets: int = 0
     completed_tickets: int = 0
     longest_path_bonus: bool = False
     longest_path: int = 0

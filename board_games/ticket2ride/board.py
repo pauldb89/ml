@@ -43,14 +43,15 @@ class Board:
                 if card.color == ANY:
                     num_visible_any_cards += 1
 
-            if num_visible_any_cards > MAX_VISIBLE_ANY_CARDS:
-                remaining_regular_cards = (
-                    self.card_deck.remaining_regular_cards
-                    + len(self.visible_cards) - num_visible_any_cards
-                )
-                if remaining_regular_cards < consts.NUM_VISIBLE_CARDS - consts.MAX_VISIBLE_ANY_CARDS:
-                    raise InvalidGameStateError("Insufficient regular cards left")
+            remaining_regular_cards = (
+                self.card_deck.remaining_regular_cards
+                + len(self.visible_cards) - num_visible_any_cards
+            )
 
+            if (
+                remaining_regular_cards >= consts.NUM_VISIBLE_CARDS - consts.MAX_VISIBLE_ANY_CARDS
+                and num_visible_any_cards > MAX_VISIBLE_ANY_CARDS
+            ):
                 for card in self.visible_cards:
                     self.card_deck.discard(card)
                 self.visible_cards = []

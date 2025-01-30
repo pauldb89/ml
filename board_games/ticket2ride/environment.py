@@ -1,3 +1,4 @@
+import collections
 from dataclasses import dataclass
 
 from termcolor import colored
@@ -13,17 +14,18 @@ from board_games.ticket2ride.actions import (
 )
 from board_games.ticket2ride.board import Board
 from board_games.ticket2ride.card import Card
-from board_games.ticket2ride.color import ANY
+from board_games.ticket2ride.color import ANY, Color, COLORS
 from board_games.ticket2ride.consts import (
     MAX_PLAYERS,
     MIN_PLAYERS,
     NUM_INITIAL_PLAYER_CARDS,
-    NUM_LAST_TURN_CARS,
+    NUM_LAST_TURN_CARS, NUM_COLOR_CARDS, NUM_ANY_CARDS,
 )
 from board_games.ticket2ride.disjoint_sets import DisjointSets
 from board_games.ticket2ride.longest_path import find_longest_path
 from board_games.ticket2ride.player import Player
 from board_games.ticket2ride.policies import Policy
+from board_games.ticket2ride.render_utils import print_player
 from board_games.ticket2ride.route import ROUTES, Route
 from board_games.ticket2ride.state import (
     ObservedState,
@@ -32,6 +34,23 @@ from board_games.ticket2ride.state import (
     Transition
 )
 from board_games.ticket2ride.ticket import DrawnTickets
+
+
+def verify_card_bookkeeping(board: Board, players: list[Player]) -> None:
+    card_counts: dict[Color, int] = collections.defaultdict(int)
+    for player in players:
+        for color, cnt in player.card_counts.items():
+            card_counts[color] += cnt
+
+    for card in board.visible_cards:
+        card_counts[card.color] += 1
+
+    for card in board.card_deck.deck + board.card_deck.discard_pile:
+        card_counts[card.color] += 1
+
+    for color in COLORS:
+        assert card_counts[color] == NUM_COLOR_CARDS
+    assert card_counts[ANY] == NUM_ANY_CARDS
 
 
 @dataclass
@@ -85,6 +104,8 @@ class Environment:
         self.consecutive_card_draws = 0
         self.longest_path_length = 0
 
+        verify_card_bookkeeping(self.board, self.players)
+
         return ObservedState(
             board=self.board,
             player=self.players[self.player_id],
@@ -111,6 +132,7 @@ class Environment:
                 score.route_points += route.value
 
         for ticket in self.players[self.player_id].tickets:
+            score.total_tickets += 1
             if disjoint_sets.are_connected(ticket.source_city, ticket.destination_city):
                 score.ticket_points += ticket.value
                 score.completed_tickets += 1
@@ -175,10 +197,13 @@ class Environment:
         next_action_type: ActionType,
         drawn_tickets: DrawnTickets | None = None,
     ) -> Transition:
-        # We must compute the score before advancing the state to the next player_id.
-        score = self.get_score()
+        verify_card_bookkeeping(self.board, self.players)
+
         return Transition(
-            state=self.get_next_state(next_action_type, drawn_tickets), score=score)
+            # We must compute the score before advancing the state to the next player_id.
+            score=self.get_score(),
+            state=self.get_next_state(next_action_type, drawn_tickets),
+        )
 
     def step(self, action: Action) -> Transition:
         assert action.action_type == self.action_type

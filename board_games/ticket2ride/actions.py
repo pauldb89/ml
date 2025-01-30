@@ -53,5 +53,3 @@ class BuildRoute(Action):
 
     def __repr__(self) -> str:
         return f"Player {self.player_id} built {self.route_info}"
-
-

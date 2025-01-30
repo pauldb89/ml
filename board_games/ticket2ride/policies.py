@@ -35,6 +35,8 @@ class Policy:
                 return self.choose_tickets(state)
             case ActionType.BUILD_ROUTE:
                 return self.build_route(state)
+            case _:
+                raise ValueError(f"Unsupported action {state.next_action}")
 
     @abc.abstractmethod
     def plan(self, state: ObservedState) -> Plan:
