@@ -4,10 +4,10 @@ import copy
 import json
 import random
 
-import neptune
 import numpy as np
 import torch
 import tqdm
+import wandb
 
 from torch.cuda.amp import GradScaler
 
@@ -378,7 +378,7 @@ class PolicyGradientTrainer:
 
         print(f"Eval metrics at epoch {epoch_id}: {json.dumps(eval_metrics, indent=2, sort_keys=True)}")
 
-    def execute(self, run: neptune.Run) -> None:
+    def execute(self) -> None:
         for epoch_id in tqdm.tqdm(range(self.num_epochs), desc="Training progress"):
             tracker = Tracker()
             with tracker.timer("t_overall"):
@@ -402,5 +402,4 @@ class PolicyGradientTrainer:
                 f"Epoch: {epoch_id}, Loss: {metrics['train/loss_mean']}, "
                 f"Total time: {metrics['t_overall_mean']} seconds"
             )
-            for key, value in metrics.items():
-                run[key].append(value, step=epoch_id)
+            wandb.log(metrics, step=epoch_id)

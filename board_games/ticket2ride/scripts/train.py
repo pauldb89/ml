@@ -1,7 +1,7 @@
 import random
 from argparse import ArgumentParser
 
-import neptune
+import wandb
 import numpy as np
 import torch
 
@@ -13,6 +13,7 @@ from board_games.ticket2ride.trainer import PolicyGradientTrainer, PointsReward
 
 def main() -> None:
     parser = ArgumentParser()
+    parser.add_argument("--name", required=True, help="Experiment run name")
     parser.add_argument("--seed", type=int, default=0, help="Random seed")
     parser.add_argument("--num_players", type=int, default=2, help="Number of players")
     parser.add_argument("--epochs", type=int, default=100, help="Number of epochs")
@@ -40,40 +41,41 @@ def main() -> None:
     torch.cuda.manual_seed(args.seed)
     torch.cuda.manual_seed_all(args.seed)
 
-    with neptune.init_run(project="pauldb89/ticket2ride", mode="offline") as run:
-        run["parameters"] = vars(args)
+    wandb.init(project="ticket2ride", name=args.name, dir="/wandb")
+    wandb.config.update(args)
 
-        model = Model(
-            device=torch.device("cuda" if torch.cuda.is_available() else "cpu"),
-            extractors=ALL_EXTRACTORS,
-            dim=args.dim,
-            layers=args.layers,
-            heads=args.heads,
-            rel_window=args.rel_window,
-        )
+    model = Model(
+        device=torch.device("cuda" if torch.cuda.is_available() else "cpu"),
+        extractors=ALL_EXTRACTORS,
+        dim=args.dim,
+        layers=args.layers,
+        heads=args.heads,
+        rel_window=args.rel_window,
+    )
 
-        env = Environment(num_players=args.num_players, seed=args.seed)
+    env = Environment(num_players=args.num_players, seed=args.seed)
 
-        optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
-        # TODO(pauldb): Add win reward and mix with points reward. Keep scales in mind.
-        trainer = PolicyGradientTrainer(
-            env=env,
-            model=model,
-            optimizer=optimizer,
-            num_epochs=args.epochs,
-            num_samples_per_epoch=args.num_samples_per_epoch,
-            num_eval_samples_per_epoch=args.num_eval_samples_per_epoch,
-            batch_size=args.batch_size,
-            evaluate_every_n_epochs=args.evaluate_every_n_epochs,
-            reward_fn=PointsReward(
-                discount=args.discount,
-                initial_draw_card_reward=2,
-                final_draw_card_reward=0,
-                draw_card_horizon_epochs=args.epochs // 2,
-            ),
-        )
-        trainer.execute(run)
+    # TODO(pauldb): Add win reward and mix with points reward. Keep scales in mind.
+    trainer = PolicyGradientTrainer(
+        env=env,
+        model=model,
+        optimizer=optimizer,
+        num_epochs=args.epochs,
+        num_samples_per_epoch=args.num_samples_per_epoch,
+        num_eval_samples_per_epoch=args.num_eval_samples_per_epoch,
+        batch_size=args.batch_size,
+        evaluate_every_n_epochs=args.evaluate_every_n_epochs,
+        reward_fn=PointsReward(
+            discount=args.discount,
+            initial_draw_card_reward=2,
+            final_draw_card_reward=0,
+            draw_card_horizon_epochs=args.epochs // 2,
+        ),
+    )
+    trainer.execute()
+    wandb.finish()
 
 
 if __name__ == "__main__":
