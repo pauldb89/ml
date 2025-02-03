@@ -4,6 +4,7 @@ from board_games.ticket2ride.actions import ActionType
 from board_games.ticket2ride.board import Board
 from board_games.ticket2ride.card import Card
 from board_games.ticket2ride.color import ANY, COLORS, EXTENDED_COLORS, Color
+from board_games.ticket2ride.render_utils import print_state
 from board_games.ticket2ride.route import ROUTES, Route
 from board_games.ticket2ride.route_info import RouteInfo
 from board_games.ticket2ride.state import ObservedState

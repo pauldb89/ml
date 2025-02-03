@@ -20,7 +20,7 @@ def main() -> None:
     torch.manual_seed(0)
 
     if args.manual:
-        policies = [KeyboardInputPolicy(), UniformRandomPolicy()]
+        policies = [KeyboardInputPolicy(), UniformRandomPolicy(seed=0)]
     else:
         model = Model(
             device=torch.device("cuda" if torch.cuda.is_available() else "cpu"),
@@ -35,7 +35,7 @@ def main() -> None:
     game = Roller(env=Environment(num_players=2), policies=policies)
 
     start_time = time.time()
-    game_stats = game.run(verbose=True)
+    game_stats = game.run(verbose=True, seed=0)
     print(f"Running the game took {time.time() - start_time} seconds")
     print_board(game_stats.transitions[-1].state.board)
     print_scorecard(game_stats.scorecard)

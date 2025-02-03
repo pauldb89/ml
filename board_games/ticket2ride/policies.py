@@ -57,12 +57,17 @@ class Policy:
 
 
 class UniformRandomPolicy(Policy):
+    def __init__(self, seed: int) -> None:
+        super().__init__()
+
+        self.rng = random.Random(seed)
+
     def plan(self, state: ObservedState) -> Plan:
         valid_action_types = get_valid_actions(state)
         return Plan(
             player_id=state.player.id,
             action_type=ActionType.PLAN,
-            next_action_type=random.choice(valid_action_types),
+            next_action_type=self.rng.choice(valid_action_types),
             class_id=None,
         )
 
@@ -71,7 +76,7 @@ class UniformRandomPolicy(Policy):
         return DrawCard(
             player_id=state.player.id,
             action_type=ActionType.DRAW_CARD,
-            card=random.choice(card_options),
+            card=self.rng.choice(card_options),
             class_id=None,
         )
 
@@ -83,7 +88,7 @@ class UniformRandomPolicy(Policy):
         return DrawTickets(
             player_id=state.player.id,
             action_type=ActionType.DRAW_TICKETS,
-            tickets=random.choice(draw_options),
+            tickets=self.rng.choice(draw_options),
             class_id=None,
         )
 
@@ -92,7 +97,7 @@ class UniformRandomPolicy(Policy):
         return BuildRoute(
             player_id=state.player.id,
             action_type=ActionType.BUILD_ROUTE,
-            route_info=random.choice(route_options),
+            route_info=self.rng.choice(route_options),
             class_id=None,
         )
 
@@ -256,4 +261,7 @@ class StochasticModelPolicy(ModelPolicy):
 
 class ArgmaxModelPolicy(ModelPolicy):
     def classify(self, logits: torch.Tensor) -> int:
+        # if logits.numel() == 4:
+        #     print(torch.softmax(logits, dim=-1))
+
         return torch.argmax(logits, dim=-1).item()

@@ -15,11 +15,14 @@ def main() -> None:
     parser = ArgumentParser()
     parser.add_argument("--seed", type=int, default=0, help="Random seed")
     parser.add_argument("--num_players", type=int, default=2, help="Number of players")
-    parser.add_argument("--epochs", type=int, default=2, help="Number of epochs")
-    parser.add_argument("--batch_size", type=int, default=32, help="Batch size")
+    parser.add_argument("--epochs", type=int, default=100, help="Number of epochs")
     parser.add_argument(
-        "--num_samples_per_epoch", type=int, default=32, help="Number of samples per epoch"
+        "--num_samples_per_epoch", type=int, default=10, help="Number of samples per epoch"
     )
+    parser.add_argument(
+        "--num_eval_samples_per_epoch", type=int, default=10, help="Number of samples per epoch"
+    )
+    parser.add_argument("--batch_size", type=int, default=32, help="Batch size")
     parser.add_argument(
         "--evaluate_every_n_epochs", type=int, default=5, help="Evaluate every n epochs"
     )
@@ -28,7 +31,7 @@ def main() -> None:
     parser.add_argument("--heads", type=int, default=8, help="Number of heads")
     parser.add_argument("--rel_window", type=int, default=100, help="Relative window size")
     parser.add_argument("--discount", type=float, default=0.95, help="Discount factor")
-    parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
+    parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
     args = parser.parse_args()
 
     random.seed(args.seed)
@@ -37,7 +40,7 @@ def main() -> None:
     torch.cuda.manual_seed(args.seed)
     torch.cuda.manual_seed_all(args.seed)
 
-    with neptune.init_run(project="pauldb89/ticket2ride") as run:
+    with neptune.init_run(project="pauldb89/ticket2ride", mode="offline") as run:
         run["parameters"] = vars(args)
 
         model = Model(
@@ -49,7 +52,7 @@ def main() -> None:
             rel_window=args.rel_window,
         )
 
-        env = Environment(num_players=args.num_players)
+        env = Environment(num_players=args.num_players, seed=args.seed)
 
         optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
@@ -59,10 +62,16 @@ def main() -> None:
             model=model,
             optimizer=optimizer,
             num_epochs=args.epochs,
-            batch_size=args.batch_size,
             num_samples_per_epoch=args.num_samples_per_epoch,
+            num_eval_samples_per_epoch=args.num_eval_samples_per_epoch,
+            batch_size=args.batch_size,
             evaluate_every_n_epochs=args.evaluate_every_n_epochs,
-            reward_fn=PointsReward(discount=args.discount),
+            reward_fn=PointsReward(
+                discount=args.discount,
+                initial_draw_card_reward=2,
+                final_draw_card_reward=0,
+                draw_card_horizon_epochs=args.epochs // 2,
+            ),
         )
         trainer.execute(run)
 

@@ -6,9 +6,9 @@ from board_games.ticket2ride.ticket import TICKETS, DrawnTickets, Ticket
 class TicketDeck:
     tickets: list[Ticket]
 
-    def __init__(self) -> None:
+    def __init__(self, rng: random.Random) -> None:
         self.tickets = copy.deepcopy(TICKETS)
-        random.shuffle(self.tickets)
+        rng.shuffle(self.tickets)
 
     def get(self) -> DrawnTickets:
         assert len(self.tickets) >= 3

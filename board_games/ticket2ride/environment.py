@@ -1,4 +1,5 @@
 import collections
+import random
 from dataclasses import dataclass
 
 from termcolor import colored
@@ -77,13 +78,14 @@ class Environment:
     longest_path_length: int
 
     scorecard: list[PlayerScore]
+    rng: random.Random
 
-    def __init__(self, num_players: int) -> None:
+    def __init__(self, num_players: int, seed: int = 0) -> None:
         self.num_players = num_players
-        self.reset()
+        self.reset(seed)
 
-    def reset(self) -> ObservedState:
-        self.board = Board(num_players=self.num_players)
+    def reset(self, seed: int) -> ObservedState:
+        self.board = Board(num_players=self.num_players, rng=random.Random(seed))
         self.players = []
         self.scorecard = []
 
@@ -138,6 +140,9 @@ class Environment:
                 score.completed_tickets += 1
             else:
                 score.ticket_points -= ticket.value
+
+        for route in owned_routes:
+            score.owned_routes_by_length[route.length] += 1
 
         score.longest_path = find_longest_path(owned_routes)
         if score.longest_path > self.longest_path_length:
@@ -194,6 +199,7 @@ class Environment:
 
     def transition(
         self,
+        action: Action,
         next_action_type: ActionType,
         drawn_tickets: DrawnTickets | None = None,
     ) -> Transition:
@@ -203,6 +209,7 @@ class Environment:
             # We must compute the score before advancing the state to the next player_id.
             score=self.get_score(),
             state=self.get_next_state(next_action_type, drawn_tickets),
+            action=action,
         )
 
     def step(self, action: Action) -> Transition:
@@ -219,6 +226,7 @@ class Environment:
                 drawn_tickets = self.board.ticket_deck.get()
 
             return self.transition(
+                action=action,
                 next_action_type=action.next_action_type,
                 drawn_tickets=drawn_tickets
             )
@@ -239,14 +247,14 @@ class Environment:
                 and (action.card is None or card.color != ANY)
                 and get_draw_card_options(self.board, self.consecutive_card_draws)
             ):
-                return self.transition(next_action_type=ActionType.DRAW_CARD)
+                return self.transition(action=action, next_action_type=ActionType.DRAW_CARD)
             else:
-                return self.transition(next_action_type=ActionType.PLAN)
+                return self.transition(action=action, next_action_type=ActionType.PLAN)
         elif action.action_type == ActionType.DRAW_TICKETS:
             assert isinstance(action, DrawTickets)
             player.tickets.extend(action.tickets)
 
-            return self.transition(next_action_type=ActionType.PLAN)
+            return self.transition(action=action, next_action_type=ActionType.PLAN)
         elif action.action_type == ActionType.BUILD_ROUTE:
             assert isinstance(action, BuildRoute)
 
@@ -271,7 +279,7 @@ class Environment:
 
             self.board.route_points[player.id] += route.value
 
-            return self.transition(next_action_type=ActionType.PLAN)
+            return self.transition(action=action, next_action_type=ActionType.PLAN)
 
 
 class Roller:
@@ -283,8 +291,8 @@ class Roller:
         self.env = env
         self.policies = policies
 
-    def run(self, verbose: bool = False) -> GameStats:
-        initial_state = state = self.env.reset()
+    def run(self, seed: int, verbose: bool = False) -> GameStats:
+        initial_state = state = self.env.reset(seed)
         transition = None
         transitions = []
         while not state.terminal:

@@ -9,21 +9,24 @@ from board_games.ticket2ride.consts import NUM_ANY_CARDS, NUM_COLOR_CARDS
 class CardDeck:
     deck: list[Card]
     discard_pile: list[Card]
+    rng: random.Random
 
-    def __init__(self) -> None:
+    def __init__(self, rng: random.Random) -> None:
+        self.rng = rng
+
         self.discard_pile = []
         self.deck = [Card(color=ANY) for _ in range(NUM_ANY_CARDS)]
         for color in COLORS:
             for _ in range(NUM_COLOR_CARDS):
                 self.deck.append(Card(color=color))
 
-        random.shuffle(self.deck)
+        self.rng.shuffle(self.deck)
 
     def draw(self) -> Card:
         if len(self.deck) == 0:
             self.deck = self.discard_pile
             self.discard_pile = []
-            random.shuffle(self.deck)
+            self.rng.shuffle(self.deck)
 
         assert len(self.deck) > 0
         return self.deck.pop()

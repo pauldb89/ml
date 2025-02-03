@@ -1,3 +1,5 @@
+import random
+
 from board_games.ticket2ride import consts
 from board_games.ticket2ride.card import Card
 from board_games.ticket2ride.card_deck import CardDeck
@@ -20,12 +22,12 @@ class Board:
     visible_cards: list[Card]
     num_players: int
 
-    def __init__(self, num_players: int) -> None:
+    def __init__(self, num_players: int, rng: random.Random) -> None:
         self.num_players = num_players
 
         self.route_ownership = {}
-        self.ticket_deck = TicketDeck()
-        self.card_deck = CardDeck()
+        self.ticket_deck = TicketDeck(rng)
+        self.card_deck = CardDeck(rng)
 
         self.train_cars = [NUM_INITIAL_TRAIN_CARS for _ in range(num_players)]
         self.route_points = [0 for _ in range(num_players)]

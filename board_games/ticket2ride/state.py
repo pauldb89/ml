@@ -1,9 +1,10 @@
 import copy
-from dataclasses import dataclass
+from collections import defaultdict
+from dataclasses import dataclass, field
 from functools import cached_property
 from typing import Self
 
-from board_games.ticket2ride.actions import ActionType
+from board_games.ticket2ride.actions import ActionType, Action
 from board_games.ticket2ride.board import Board
 from board_games.ticket2ride.consts import LONGEST_PATH_POINTS
 from board_games.ticket2ride.player import Player
@@ -49,6 +50,7 @@ class PlayerScore:
     completed_tickets: int = 0
     longest_path_bonus: bool = False
     longest_path: int = 0
+    owned_routes_by_length: dict[int, int] = field(default_factory=lambda: defaultdict(int))
 
     @property
     def total_points(self) -> int:
@@ -82,5 +84,6 @@ class Score:
 
 @dataclass
 class Transition:
+    action: Action
     state: ObservedState
     score: Score
