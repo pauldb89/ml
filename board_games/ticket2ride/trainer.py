@@ -1,7 +1,9 @@
 import abc
 import collections
 import copy
+import hashlib
 import json
+import os
 import random
 
 import numpy as np
@@ -206,30 +208,39 @@ def normalize_rewards(samples: list[Sample]) -> list[Sample]:
     return samples
 
 
+def tensor_hash(t: torch.Tensor) -> str:
+    data = t.detach().cpu().numpy().tobytes()
+    return hashlib.sha256(data).hexdigest()
+
+
 class PolicyGradientTrainer:
     def __init__(
         self,
         env: Environment,
         model: Model,
         optimizer: torch.optim.Optimizer,
+        checkpoint_path: str,
         num_epochs: int,
         num_samples_per_epoch: int,
         num_eval_samples_per_epoch: int,
         batch_size: int,
         evaluate_every_n_epochs: int,
+        checkpoint_every_n_epochs: int,
         reward_fn: Reward,
     ):
         self.env = env
         self.model = model
         self.optimizer = optimizer
+        self.checkpoint_path = checkpoint_path
         self.num_epochs = num_epochs
         self.num_samples_per_epoch = num_samples_per_epoch
         self.num_eval_samples_per_epoch = num_eval_samples_per_epoch
         self.batch_size = batch_size
         self.evaluate_every_n_epochs = evaluate_every_n_epochs
+        self.checkpoint_every_n_epochs = checkpoint_every_n_epochs
         self.reward_fn = reward_fn
 
-        self.scaler = GradScaler()
+        self.scaler = GradScaler(init_scale=2.**16)
 
         self.episode_id = 0
 
@@ -269,10 +280,6 @@ class PolicyGradientTrainer:
                     player_raw_samples, transition, epoch_id=epoch_id
                 )
 
-        # for s in samples[0]:
-        #     print(s.state.turn_id, s.state.player.id, s.action, s.reward)
-        # print("-" * 20)
-
         return samples
 
     def collect_samples(self, tracker: Tracker, epoch_id: int) -> list[Sample]:
@@ -304,13 +311,13 @@ class PolicyGradientTrainer:
 
         return normalize_rewards(samples)
 
-    def train(self, samples: list[Sample], tracker: Tracker) -> None:
+    def train(self, samples: list[Sample], tracker: Tracker, epoch_id: int) -> None:
         self.model.train()
 
         self.optimizer.zero_grad()
 
         num_batches = 0
-        total_loss = 0
+        losses = []
         for start_index in tqdm.tqdm(range(0, len(samples), self.batch_size), desc="Train step"):
             num_batches += 1
             batch_samples = samples[start_index:start_index + self.batch_size]
@@ -318,14 +325,17 @@ class PolicyGradientTrainer:
             with torch.cuda.amp.autocast():
                 loss = len(batch_samples) / len(samples) * self.model.loss(batch_samples)
                 assert torch.isnan(loss).sum() == 0
-                total_loss += loss.item()
+                losses.append(loss)
                 loss = self.scaler.scale(loss)
                 loss.backward()
 
         self.scaler.step(self.optimizer)
         self.scaler.update()
 
-        tracker.log_value("loss", total_loss)
+        total_loss = sum(losses)
+        loss_hash = tensor_hash(total_loss)
+        wandb.log({"loss_hash": loss_hash}, step=epoch_id)
+        tracker.log_value("loss", total_loss.item())
         tracker.log_value("num_batches", num_batches)
 
     def evaluate(self, tracker: Tracker, epoch_id: int) -> None:
@@ -346,10 +356,6 @@ class PolicyGradientTrainer:
                 for t in stats.transitions:
                     if t.action.player_id == index:
                         actions.append(t.action)
-
-                # for action in actions:
-                #     print(action)
-                # print("-" * 20)
 
                 action_metrics = get_action_stats(actions)
                 for key, value in action_metrics.items():
@@ -378,10 +384,18 @@ class PolicyGradientTrainer:
 
         print(f"Eval metrics at epoch {epoch_id}: {json.dumps(eval_metrics, indent=2, sort_keys=True)}")
 
+    def checkpoint(self, epoch_id: int) -> None:
+        torch.save(self.model.state_dict(), os.path.join(self.checkpoint_path, f"model_{epoch_id:05d}.path"))
+
     def execute(self) -> None:
         for epoch_id in tqdm.tqdm(range(self.num_epochs), desc="Training progress"):
             tracker = Tracker()
             with tracker.timer("t_overall"):
+                if epoch_id % self.checkpoint_every_n_epochs == 0:
+                    with tracker.scope("checkpoint"):
+                        with tracker.timer("t_overall"):
+                            self.checkpoint(epoch_id=epoch_id)
+
                 if epoch_id % self.evaluate_every_n_epochs == 0:
                     with tracker.scope("eval"):
                         with tracker.timer("t_overall"):
@@ -395,7 +409,7 @@ class PolicyGradientTrainer:
 
                 with tracker.scope("train"):
                     with tracker.timer("t_overall"):
-                        self.train(samples=samples, tracker=tracker)
+                        self.train(samples=samples, tracker=tracker, epoch_id=epoch_id)
 
             metrics = tracker.report()
             print(
@@ -403,3 +417,13 @@ class PolicyGradientTrainer:
                 f"Total time: {metrics['t_overall_mean']} seconds"
             )
             wandb.log(metrics, step=epoch_id)
+
+        tracker = Tracker()
+        with tracker.scope("checkpoint"):
+            with tracker.timer("t_overall"):
+                self.checkpoint(epoch_id=self.num_epochs)
+
+        with tracker.scope("eval"):
+            with tracker.timer("t_overall"):
+                with torch.no_grad():
+                    self.evaluate(tracker, epoch_id=self.num_epochs)
