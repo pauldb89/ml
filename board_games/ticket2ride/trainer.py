@@ -321,7 +321,7 @@ class PolicyGradientTrainer:
 
         action_counts = collections.defaultdict(int)
         for s in samples:
-            action_counts[(s.action.action_type, s.action.class_id)] += 1
+            action_counts[(s.action.action_type, s.action.prediction.class_id)] += 1
         tracker.log_value("unique_explored_actions", len(action_counts))
 
         return normalize_rewards(samples)

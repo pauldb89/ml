@@ -90,7 +90,7 @@ class UniformRandomPolicy(ElementPolicy):
             player_id=state.player.id,
             action_type=ActionType.PLAN,
             next_action_type=self.rng.choice(valid_action_types),
-            class_id=None,
+            prediction=None,
         )
 
     def draw_card(self, state: ObservedState) -> DrawCard:
@@ -99,7 +99,7 @@ class UniformRandomPolicy(ElementPolicy):
             player_id=state.player.id,
             action_type=ActionType.DRAW_CARD,
             card=self.rng.choice(card_options),
-            class_id=None,
+            prediction=None,
         )
 
     def choose_tickets(self, state: ObservedState) -> DrawTickets:
@@ -111,7 +111,7 @@ class UniformRandomPolicy(ElementPolicy):
             player_id=state.player.id,
             action_type=ActionType.DRAW_TICKETS,
             tickets=self.rng.choice(draw_options),
-            class_id=None,
+            prediction=None,
         )
 
     def build_route(self, state: ObservedState) -> BuildRoute:
@@ -120,7 +120,7 @@ class UniformRandomPolicy(ElementPolicy):
             player_id=state.player.id,
             action_type=ActionType.BUILD_ROUTE,
             route_info=self.rng.choice(route_options),
-            class_id=None,
+            prediction=None,
         )
 
 
@@ -132,7 +132,7 @@ class KeyboardInputPolicy(ElementPolicy):
             player_id=state.player.id,
             action_type=ActionType.PLAN,
             next_action_type=read_option(description="Available actions:", options=valid_actions),
-            class_id=None,
+            prediction=None,
         )
 
     def draw_card(self, state: ObservedState) -> DrawCard:
@@ -142,7 +142,7 @@ class KeyboardInputPolicy(ElementPolicy):
             player_id=state.player.id,
             action_type=ActionType.DRAW_CARD,
             card=read_option(description="Available draw options:", options=draw_options),
-            class_id=None,
+            prediction=None,
         )
 
     def choose_tickets(self, state: ObservedState) -> DrawTickets:
@@ -155,7 +155,7 @@ class KeyboardInputPolicy(ElementPolicy):
             player_id=state.player.id,
             action_type=ActionType.DRAW_TICKETS,
             tickets=read_option(description="Available ticket combos:", options=ticket_options),
-            class_id=None,
+            prediction=None,
         )
 
     def build_route(self, state: ObservedState) -> BuildRoute:
@@ -168,7 +168,7 @@ class KeyboardInputPolicy(ElementPolicy):
                 description="Available route building options:",
                 options=build_options,
             ),
-            class_id=None,
+            prediction=None,
         )
 
 

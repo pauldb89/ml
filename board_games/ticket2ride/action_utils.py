@@ -5,10 +5,10 @@ from board_games.ticket2ride.actions import BuildRoute
 from board_games.ticket2ride.actions import DrawCard
 from board_games.ticket2ride.actions import DrawTickets
 from board_games.ticket2ride.actions import Plan
+from board_games.ticket2ride.actions import Prediction
 from board_games.ticket2ride.board import Board
 from board_games.ticket2ride.card import Card
 from board_games.ticket2ride.color import ANY, COLORS, EXTENDED_COLORS, Color
-from board_games.ticket2ride.render_utils import print_state
 from board_games.ticket2ride.route import ROUTES, Route
 from board_games.ticket2ride.route_info import RouteInfo
 from board_games.ticket2ride.state import ObservedState
@@ -169,7 +169,7 @@ def create_plan_action(state: ObservedState, class_id: int) -> Plan:
         player_id=state.player.id,
         action_type=ActionType.PLAN,
         next_action_type=PLAN_CLASSES[class_id],
-        class_id=class_id,
+        prediction=Prediction(class_id=class_id, log_prob=0, value=0),
     )
 
 
@@ -178,7 +178,7 @@ def create_draw_card_action(state: ObservedState, class_id: int) -> DrawCard:
         player_id=state.player.id,
         action_type=ActionType.DRAW_CARD,
         card=DRAW_CARD_CLASSES[class_id],
-        class_id=class_id,
+        prediction=Prediction(class_id=class_id, log_prob=0, value=0),
     )
 
 
@@ -187,7 +187,7 @@ def create_draw_tickets_action(state: ObservedState, class_id: int) -> DrawTicke
         player_id=state.player.id,
         action_type=ActionType.DRAW_TICKETS,
         tickets=tuple(state.drawn_tickets[ticket_idx] for ticket_idx in CHOOSE_TICKETS_CLASSES[class_id]),
-        class_id=class_id,
+        prediction=Prediction(class_id=class_id, log_prob=0, value=0),
     )
 
 
@@ -202,5 +202,5 @@ def create_build_route_action(state: ObservedState, class_id: int) -> BuildRoute
             color=color,
             num_any_cards=max(0, route.length - state.player.card_counts[color]),
         ),
-        class_id=class_id,
+        prediction=Prediction(class_id=class_id, log_prob=0, value=0),
     )

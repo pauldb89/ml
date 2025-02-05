@@ -224,8 +224,8 @@ class Model(nn.Module):
             for sample in group:
                 states.append(sample.state)
                 weights.append(sample.reward)
-                assert sample.action.class_id is not None
-                targets.append(sample.action.class_id)
+                assert sample.action.prediction is not None
+                targets.append(sample.action.prediction.class_id)
 
             logits = self(states, head=action_type)
             targets = torch.tensor(targets, dtype=torch.long, device=self.device)

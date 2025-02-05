@@ -14,10 +14,17 @@ class ActionType(StrEnum):
 
 
 @dataclass(frozen=True)
+class Prediction:
+    class_id: int
+    log_prob: float
+    value: float
+
+
+@dataclass(frozen=True)
 class Action:
     player_id: int
     action_type: ActionType
-    class_id: int | None
+    prediction: Prediction | None
 
 
 @dataclass(frozen=True)
