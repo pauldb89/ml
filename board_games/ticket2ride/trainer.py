@@ -19,6 +19,7 @@ from board_games.ticket2ride.environment import Environment, Roller
 from board_games.ticket2ride.model import Model, RawSample, Sample
 from board_games.ticket2ride.policies import Policy, UniformRandomPolicy, \
     ArgmaxModelPolicy, StochasticModelPolicy
+from board_games.ticket2ride.state import PlayerScore
 from board_games.ticket2ride.state import Transition
 from board_games.ticket2ride.tracker import Tracker
 
@@ -153,6 +154,7 @@ class MixedReward(Reward):
             alpha = epoch_id / (self.num_epochs - 1)
             reward = initial_sample.reward * (1 - alpha) + final_sample.reward * alpha
             sample = Sample(
+                episode_id=initial_sample.episode_id,
                 state=initial_sample.state,
                 action=initial_sample.action,
                 score=initial_sample.score,
@@ -163,22 +165,22 @@ class MixedReward(Reward):
         return samples
 
 
-def get_action_stats(actions: list[Action]) -> dict[str, float]:
+def track_action_stats(tracker: Tracker, actions: list[Action]) -> None:
     new_turn = True
     consecutive_draws = 0
     longest_draw = 0
     draw_lengths = collections.defaultdict(int)
-    deck_card_draws = 0
-    color_card_draws = 0
-    any_card_draws = 0
+    card_draws_deck = 0
+    card_draws_color = 0
+    card_draws_any = 0
     for action in actions:
         if isinstance(action, DrawCard):
             if action.card is None:
-                deck_card_draws += 1
+                card_draws_deck += 1
             elif action.card.color == ANY:
-                any_card_draws += 1
+                card_draws_any += 1
             else:
-                color_card_draws += 1
+                card_draws_color += 1
 
         if new_turn:
             if action.action_type == ActionType.DRAW_CARD:
@@ -191,15 +193,27 @@ def get_action_stats(actions: list[Action]) -> dict[str, float]:
         longest_draw = max(longest_draw, consecutive_draws)
         new_turn = action.action_type == ActionType.PLAN
 
-    metrics = {
-        "longest_draw": longest_draw,
-        "card_draws_any": any_card_draws,
-        "card_draws_deck": deck_card_draws,
-        "card_draws_color": color_card_draws,
-    }
+    tracker.log_value("longest_draw", longest_draw)
+    tracker.log_value("card_draws_any", card_draws_any)
+    tracker.log_value("card_draws_deck", card_draws_deck)
+    tracker.log_value("card_draws_color", card_draws_color)
     for length, cnt in draw_lengths.items():
-        metrics[f"consecutive_draws_len_{length:02d}"] = cnt
-    return metrics
+        tracker.log_value(f"consecutive_draws_len_{length:02d}", cnt)
+
+
+def track_score_stats(tracker: Tracker, score: PlayerScore) -> None:
+    tracker.log_value("total_points", score.total_points)
+    tracker.log_value("route_points", score.route_points)
+    tracker.log_value("tickets_drawn", score.total_tickets)
+    tracker.log_value("tickets_completed", score.completed_tickets)
+    tracker.log_value("ticket_points", score.ticket_points)
+    tracker.log_value("longest_path_bonus", score.longest_path_bonus)
+    tracker.log_value("completed_routes", sum(score.owned_routes_by_length.values()))
+    for length in range(1, 7):
+        num_routes = score.owned_routes_by_length[length]
+        tracker.log_value(f"completed_routes_len_{length}", num_routes)
+        for _ in range(num_routes):
+            tracker.log_value(f"completed_routes_length", length)
 
 
 def normalize_rewards(samples: list[Sample]) -> list[Sample]:
@@ -285,10 +299,18 @@ class PolicyGradientTrainer:
 
             episodes = active_episodes
 
+        for transition in terminal_transitions:
+            for score in transition.score.scorecard:
+                track_score_stats(tracker, score)
+
         samples = []
         for per_episode_samples, terminal_transition in zip(raw_samples, terminal_transitions):
+            for per_player_samples in per_episode_samples.values():
+                actions = [sample.action for sample in per_player_samples]
+                track_action_stats(tracker, actions)
+
             with tracker.timer("t_compute_rewards"):
-                for player_id, per_player_samples in per_episode_samples.items():
+                for per_player_samples in per_episode_samples.values():
                     assert terminal_transition is not None
                     samples.extend(self.reward_fn.apply(per_player_samples, terminal_transition, epoch_id=epoch_id))
 
@@ -341,25 +363,11 @@ class PolicyGradientTrainer:
                     if t.action.player_id == index:
                         actions.append(t.action)
 
-                action_metrics = get_action_stats(actions)
-                for key, value in action_metrics.items():
-                    tracker.log_value(key, value)
+                track_action_stats(tracker, actions)
 
                 score = stats.transitions[-1].score
-                policy_score = score.scorecard[index]
                 tracker.log_value("wins", score.winner_id == index)
-                tracker.log_value("total_points", policy_score.total_points)
-                tracker.log_value("route_points", policy_score.route_points)
-                tracker.log_value("tickets_drawn", policy_score.total_tickets)
-                tracker.log_value("tickets_completed", policy_score.completed_tickets)
-                tracker.log_value("ticket_points", policy_score.ticket_points)
-                tracker.log_value("longest_path_bonus", policy_score.longest_path_bonus)
-                tracker.log_value("completed_routes", sum(policy_score.owned_routes_by_length.values()))
-                for length in range(1, 7):
-                    num_routes = policy_score.owned_routes_by_length[length]
-                    tracker.log_value(f"completed_routes_len_{length}", num_routes)
-                    for _ in range(num_routes):
-                        tracker.log_value(f"completed_routes_length", length)
+                track_score_stats(tracker, score.scorecard[index])
 
         eval_metrics = {}
         for key, value in tracker.report().items():
@@ -411,3 +419,5 @@ class PolicyGradientTrainer:
             with tracker.timer("t_overall"):
                 with torch.no_grad():
                     self.evaluate(tracker, epoch_id=self.num_epochs)
+        metrics = tracker.report()
+        wandb.log(metrics, step=self.num_epochs)
