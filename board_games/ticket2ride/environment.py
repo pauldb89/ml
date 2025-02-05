@@ -22,11 +22,9 @@ from board_games.ticket2ride.consts import (
     NUM_INITIAL_PLAYER_CARDS,
     NUM_LAST_TURN_CARS, NUM_COLOR_CARDS, NUM_ANY_CARDS,
 )
-from board_games.ticket2ride.disjoint_sets import DisjointSets
 from board_games.ticket2ride.longest_path import find_longest_path
 from board_games.ticket2ride.player import Player
 from board_games.ticket2ride.policies import Policy
-from board_games.ticket2ride.render_utils import print_player
 from board_games.ticket2ride.route import ROUTES, Route
 from board_games.ticket2ride.state import (
     ObservedState,
@@ -123,26 +121,22 @@ class Environment:
             return Score(scorecard=self.scorecard, turn_score=PlayerScore(self.player_id))
 
         score = PlayerScore(player_id=self.player_id)
-        disjoint_sets = DisjointSets()
-        owned_routes: list[Route] = []
-        for route_info in self.board.route_ownership.values():
-            if route_info.player_id == self.player_id:
-                route = ROUTES[route_info.route_id]
-                disjoint_sets.connect(route.source_city, route.destination_city)
-
-                owned_routes.append(route)
-                score.route_points += route.value
-
-        for ticket in self.players[self.player_id].tickets:
+        player = self.players[self.player_id]
+        for ticket in player.tickets:
             score.total_tickets += 1
-            if disjoint_sets.are_connected(ticket.source_city, ticket.destination_city):
+            if player.disjoint_sets.are_connected(ticket.source_city, ticket.destination_city):
                 score.ticket_points += ticket.value
                 score.completed_tickets += 1
             else:
                 score.ticket_points -= ticket.value
 
-        for route in owned_routes:
-            score.owned_routes_by_length[route.length] += 1
+        owned_routes: list[Route] = []
+        for route_info in self.board.route_ownership.values():
+            if route_info.player_id == self.player_id:
+                route = ROUTES[route_info.route_id]
+                owned_routes.append(route)
+                score.route_points += route.value
+                score.owned_routes_by_length[route.length] += 1
 
         score.longest_path = find_longest_path(owned_routes)
         if score.longest_path > self.longest_path_length:
@@ -263,6 +257,7 @@ class Environment:
             self.board.route_ownership[route_info.route_id] = route_info
 
             route = ROUTES[route_info.route_id]
+            player.build_route(route)
             num_regular_cards = route.length - route_info.num_any_cards
             for _ in range(num_regular_cards):
                 player.card_counts[route_info.color] -= 1

@@ -8,7 +8,6 @@ from board_games.ticket2ride.color import EXTENDED_COLORS
 from board_games.ticket2ride.consts import MAX_PLAYERS
 from board_games.ticket2ride.consts import NUM_ANY_CARDS
 from board_games.ticket2ride.consts import NUM_VISIBLE_CARDS
-from board_games.ticket2ride.disjoint_sets import DisjointSets
 from board_games.ticket2ride.actions import ActionType
 from board_games.ticket2ride.route import ROUTES
 from board_games.ticket2ride.state import ObservedState
@@ -275,12 +274,6 @@ class TicketExtractor(Extractor):
         if tickets is None:
             return []
 
-        disjoint_sets = DisjointSets()
-        for route_info in state.board.route_ownership.values():
-            if route_info.player_id == state.player.id:
-                route = ROUTES[route_info.route_id]
-                disjoint_sets.connect(route.source_city, route.destination_city)
-
         features = [FeatureValue(type=FeatureType.SEPARATOR, value=self.separator.value)]
         for ticket in tickets:
             features.extend([
@@ -291,7 +284,7 @@ class TicketExtractor(Extractor):
                 FeatureValue(type=FeatureType.TICKET_POINTS, value=ticket.value),
                 FeatureValue(
                     type=FeatureType.TICKET_STATUS,
-                    value=disjoint_sets.are_connected(ticket.source_city, ticket.destination_city),
+                    value=int(state.player.disjoint_sets.are_connected(ticket.source_city, ticket.destination_city)),
                 )
             ])
 
@@ -331,20 +324,14 @@ class StaticOwnedTicketsExtractor(Extractor):
         return [FeatureType.TICKET_STATUS]
 
     def extract(self, state: ObservedState) -> Features:
-        disjoint_sets = DisjointSets()
-        for route_info in state.board.route_ownership.values():
-            if route_info.player_id == state.player.id:
-                route = ROUTES[route_info.route_id]
-                disjoint_sets.connect(route.source_city, route.destination_city)
-
         owned_tickets = {ticket.id for ticket in state.player.tickets}
         features = []
-        for ticket in TICKETS:
-            if ticket.id in owned_tickets:
+        for t in TICKETS:
+            if t.id in owned_tickets:
                 features.append(
                     FeatureValue(
                         type=FeatureType.TICKET_STATUS,
-                        value=int(disjoint_sets.are_connected(ticket.source_city, ticket.destination_city)),
+                        value=int(state.player.disjoint_sets.are_connected(t.source_city, t.destination_city)),
                     )
                 )
             else:
@@ -362,12 +349,6 @@ class StaticDrawnTicketsExtractor(Extractor):
         ]
 
     def extract(self, state: ObservedState) -> Features:
-        disjoint_sets = DisjointSets()
-        for route_info in state.board.route_ownership.values():
-            if route_info.player_id == state.player.id:
-                route = ROUTES[route_info.route_id]
-                disjoint_sets.connect(route.source_city, route.destination_city)
-
         features = []
         for ticket in state.drawn_tickets:
             features.extend([
@@ -375,7 +356,7 @@ class StaticDrawnTicketsExtractor(Extractor):
                 FeatureValue(type=FeatureType.TICKET_POINTS, value=ticket.value),
                 FeatureValue(
                     type=FeatureType.TICKET_STATUS,
-                    value=disjoint_sets.are_connected(ticket.source_city, ticket.destination_city),
+                    value=state.player.disjoint_sets.are_connected(ticket.source_city, ticket.destination_city),
                 )
             ])
 
