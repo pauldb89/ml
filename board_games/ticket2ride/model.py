@@ -16,6 +16,7 @@ from board_games.ticket2ride.state import ObservedState, Score
 
 @dataclass
 class RawSample:
+    episode_id: int
     state: ObservedState
     action: Action
     score: Score

@@ -6,8 +6,8 @@ import wandb
 import numpy as np
 import torch
 
-from board_games.ticket2ride.environment import Environment
-from board_games.ticket2ride.features import ALL_EXTRACTORS
+from board_games.ticket2ride.features import DYNAMIC_EXTRACTORS
+from board_games.ticket2ride.features import STATIC_EXTRACTORS
 from board_games.ticket2ride.model import Model
 from board_games.ticket2ride.trainer import PolicyGradientTrainer, PointsReward
 
@@ -36,6 +36,7 @@ def main() -> None:
     parser.add_argument("--initial_draw_card_reward", type=float, default=2.0, help="Initial draw card reward")
     parser.add_argument("--final_draw_card_reward", type=float, default=0.0, help="Final draw card reward")
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
+    parser.add_argument("--extractors", type=str, default="dynamic", choices=["dynamic", "static"], help="Feature set")
     args = parser.parse_args()
 
     random.seed(args.seed)
@@ -52,14 +53,12 @@ def main() -> None:
 
     model = Model(
         device=torch.device("cuda" if torch.cuda.is_available() else "cpu"),
-        extractors=ALL_EXTRACTORS,
+        extractors=DYNAMIC_EXTRACTORS if args.extractors == "dynamic" else STATIC_EXTRACTORS,
         dim=args.dim,
         layers=args.layers,
         heads=args.heads,
         rel_window=args.rel_window,
     )
-
-    env = Environment(num_players=args.num_players, seed=args.seed)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
@@ -67,10 +66,10 @@ def main() -> None:
     checkpoint_path = os.path.join(args.checkpoint_path, args.name)
     os.makedirs(checkpoint_path, exist_ok=True)
     trainer = PolicyGradientTrainer(
-        env=env,
         model=model,
         optimizer=optimizer,
         checkpoint_path=checkpoint_path,
+        num_players=args.num_players,
         num_epochs=args.epochs,
         num_samples_per_epoch=args.num_samples_per_epoch,
         num_eval_samples_per_epoch=args.num_eval_samples_per_epoch,

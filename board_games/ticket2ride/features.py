@@ -5,6 +5,9 @@ from typing import Iterable
 
 from board_games.ticket2ride.city import CITIES
 from board_games.ticket2ride.color import EXTENDED_COLORS
+from board_games.ticket2ride.consts import MAX_PLAYERS
+from board_games.ticket2ride.consts import NUM_ANY_CARDS
+from board_games.ticket2ride.consts import NUM_VISIBLE_CARDS
 from board_games.ticket2ride.disjoint_sets import DisjointSets
 from board_games.ticket2ride.actions import ActionType
 from board_games.ticket2ride.route import ROUTES
@@ -40,6 +43,8 @@ class FeatureType(enum.IntEnum):
     TICKET_POINTS = 8
     TICKET_STATUS = 9
     ROUTE_LENGTH = 10
+    COLOR_COUNTS = 11
+    ROUTE_STATUS = 12
 
 
 @dataclass
@@ -51,15 +56,17 @@ class FeatureDef:
 FEATURE_REGISTRY: dict[FeatureType, FeatureDef] = {
     FeatureType.SEPARATOR: FeatureDef(type=FeatureType.SEPARATOR, cardinality=len(Separator)),
     FeatureType.ACTION_TYPE: FeatureDef(type=FeatureType.ACTION_TYPE, cardinality=len(ActionType)),
-    FeatureType.PLAYER_ID: FeatureDef(type=FeatureType.PLAYER_ID, cardinality=2),
+    FeatureType.PLAYER_ID: FeatureDef(type=FeatureType.PLAYER_ID, cardinality=MAX_PLAYERS),
     FeatureType.TRAIN_CARS: FeatureDef(type=FeatureType.TRAIN_CARS, cardinality=46),
-    FeatureType.COLOR: FeatureDef(type=FeatureType.COLOR, cardinality=len(EXTENDED_COLORS)),
+    FeatureType.COLOR: FeatureDef(type=FeatureType.COLOR, cardinality=len(EXTENDED_COLORS)+1),
     FeatureType.CITY: FeatureDef(type=FeatureType.CITY, cardinality=len(CITIES)),
     FeatureType.ROUTE: FeatureDef(type=FeatureType.ROUTE, cardinality=len(ROUTES)),
     FeatureType.TICKET: FeatureDef(type=FeatureType.TICKET, cardinality=len(TICKETS)),
     FeatureType.TICKET_POINTS: FeatureDef(type=FeatureType.TICKET_POINTS, cardinality=23),
-    FeatureType.TICKET_STATUS: FeatureDef(type=FeatureType.TICKET_STATUS, cardinality=2),
+    FeatureType.TICKET_STATUS: FeatureDef(type=FeatureType.TICKET_STATUS, cardinality=3),
     FeatureType.ROUTE_LENGTH: FeatureDef(type=FeatureType.ROUTE_LENGTH, cardinality=7),
+    FeatureType.COLOR_COUNTS: FeatureDef(type=FeatureType.COLOR_COUNTS, cardinality=NUM_ANY_CARDS),
+    FeatureType.ROUTE_STATUS: FeatureDef(type=FeatureType.ROUTE_STATUS, cardinality=MAX_PLAYERS+1)
 }
 
 
@@ -85,38 +92,63 @@ class Extractor:
 
 
 class TaskTypeExtractor(Extractor):
+    def __init__(self, include_separator: bool) -> None:
+        super().__init__()
+        self.include_separator = include_separator
+
     @property
     def feature_types(self) -> list[FeatureType]:
-        return [FeatureType.SEPARATOR, FeatureType.ACTION_TYPE]
+        feature_types = [FeatureType.ACTION_TYPE]
+        if self.include_separator:
+            feature_types.append(FeatureType.SEPARATOR)
+        return feature_types
 
     def extract(self, state: ObservedState) -> Features:
-        return [
-            FeatureValue(type=FeatureType.SEPARATOR, value=Separator.ACTION_TYPE.value),
-            FeatureValue(
-                type=FeatureType.ACTION_TYPE, value=list(ActionType).index(state.next_action)
-            ),
-        ]
+        features = []
+        if self.include_separator:
+            features.append(FeatureValue(type=FeatureType.SEPARATOR, value=Separator.ACTION_TYPE.value))
+
+        features.append(FeatureValue(type=FeatureType.ACTION_TYPE, value=list(ActionType).index(state.next_action)))
+        return features
 
 
 class PlayerIdExtractor(Extractor):
+    def __init__(self, include_separator: bool):
+        super().__init__()
+        self.include_separator = include_separator
+
     @property
     def feature_types(self) -> list[FeatureType]:
-        return [FeatureType.SEPARATOR, FeatureType.PLAYER_ID]
+        feature_types = [FeatureType.PLAYER_ID]
+        if self.include_separator:
+            feature_types.append(FeatureType.SEPARATOR)
+        return feature_types
 
     def extract(self, state: ObservedState) -> Features:
-        return [
-            FeatureValue(type=FeatureType.SEPARATOR, value=Separator.PLAYER_ID.value),
-            FeatureValue(type=FeatureType.PLAYER_ID, value=state.player.id),
-        ]
+        features = []
+        if self.include_separator:
+            features.append(FeatureValue(type=FeatureType.SEPARATOR, value=Separator.PLAYER_ID.value))
+        features.append(FeatureValue(type=FeatureType.PLAYER_ID, value=state.player.id))
+        return features
 
 
 class TrainCarsExtractor(Extractor):
+    def __init__(self, include_separator: bool):
+        super().__init__()
+        self.include_separator = include_separator
+
     @property
     def feature_types(self) -> list[FeatureType]:
-        return [FeatureType.SEPARATOR, FeatureType.TRAIN_CARS]
+        feature_types = [FeatureType.TRAIN_CARS]
+        if self.include_separator:
+            feature_types.append(FeatureType.SEPARATOR)
+        return feature_types
 
     def extract(self, state: ObservedState) -> Features:
-        features = [FeatureValue(type=FeatureType.SEPARATOR, value=Separator.TRAIN_CARS.value)]
+        features = []
+        if self.include_separator:
+            features.append(FeatureValue(type=FeatureType.SEPARATOR, value=Separator.TRAIN_CARS.value))
+
         for player_train_cars in state.board.train_cars:
             features.append(FeatureValue(type=FeatureType.TRAIN_CARS, value=player_train_cars))
 
@@ -124,14 +156,27 @@ class TrainCarsExtractor(Extractor):
 
 
 class VisibleCardsExtractor(Extractor):
+    def __init__(self, include_separator: bool) -> None:
+        super().__init__()
+        self.include_separator = include_separator
+
     @property
     def feature_types(self) -> list[FeatureType]:
-        return [FeatureType.SEPARATOR, FeatureType.COLOR]
+        feature_types = [FeatureType.COLOR]
+        if self.include_separator:
+            feature_types.append(FeatureType.SEPARATOR)
+        return feature_types
 
     def extract(self, state: ObservedState) -> Features:
-        features = [FeatureValue(type=FeatureType.SEPARATOR, value=Separator.VISIBLE_CARDS.value)]
+        features = []
+        if self.include_separator:
+            features.append(FeatureValue(type=FeatureType.SEPARATOR, value=Separator.VISIBLE_CARDS.value))
+
         for card in state.board.visible_cards:
             features.append(FeatureValue(type=FeatureType.COLOR, value=card.color.id))
+
+        for _ in range(NUM_VISIBLE_CARDS - len(state.board.visible_cards)):
+            features.append(FeatureValue(type=FeatureType.COLOR, value=len(EXTENDED_COLORS)))
 
         return features
 
@@ -148,6 +193,15 @@ class OwnedCardsExtractor(Extractor):
                 features.append(FeatureValue(type=FeatureType.COLOR, value=color.id))
 
         return features
+
+
+class OwnedCardsCountExtractor(Extractor):
+    @property
+    def feature_types(self) -> list[FeatureType]:
+        return [FeatureType.COLOR_COUNTS]
+
+    def extract(self, state: ObservedState) -> Features:
+        return [FeatureValue(type=FeatureType.COLOR_COUNTS, value=state.player.card_counts[c]) for c in EXTENDED_COLORS]
 
 
 class RouteOwnershipExtractor(Extractor):
@@ -185,6 +239,23 @@ class RouteOwnershipExtractor(Extractor):
                     FeatureValue(type=FeatureType.ROUTE_LENGTH, value=route.length)
                 ])
 
+        return features
+
+
+class StaticRouteOwnershipExtractor(Extractor):
+    @property
+    def feature_types(self) -> list[FeatureType]:
+        return [FeatureType.ROUTE_STATUS]
+
+    def extract(self, state: ObservedState) -> Features:
+        features = []
+        for route in ROUTES:
+            if route.id in state.board.route_ownership:
+                features.append(
+                    FeatureValue(type=FeatureType.ROUTE_STATUS, value=state.board.route_ownership[route.id].player_id)
+                )
+            else:
+                features.append(FeatureValue(type=FeatureType.ROUTE_STATUS, value=state.board.num_players))
         return features
 
 
@@ -254,13 +325,81 @@ class DrawnTicketsExtractor(TicketExtractor):
         return state.drawn_tickets
 
 
-ALL_EXTRACTORS: list[Extractor] = [
-    TaskTypeExtractor(),
-    PlayerIdExtractor(),
-    TrainCarsExtractor(),
-    VisibleCardsExtractor(),
-    OwnedCardsExtractor(),
-    RouteOwnershipExtractor(),
-    OwnedTicketsExtractor(),
-    DrawnTicketsExtractor(),
+class StaticOwnedTicketsExtractor(Extractor):
+    @property
+    def feature_types(self) -> list[FeatureType]:
+        return [FeatureType.TICKET_STATUS]
+
+    def extract(self, state: ObservedState) -> Features:
+        disjoint_sets = DisjointSets()
+        for route_info in state.board.route_ownership.values():
+            if route_info.player_id == state.player.id:
+                route = ROUTES[route_info.route_id]
+                disjoint_sets.connect(route.source_city, route.destination_city)
+
+        owned_tickets = {ticket.id for ticket in state.player.tickets}
+        features = []
+        for ticket in TICKETS:
+            if ticket.id in owned_tickets:
+                features.append(
+                    FeatureValue(
+                        type=FeatureType.TICKET_STATUS,
+                        value=int(disjoint_sets.are_connected(ticket.source_city, ticket.destination_city)),
+                    )
+                )
+            else:
+                features.append(FeatureValue(type=FeatureType.TICKET_STATUS, value=2))
+        return features
+
+
+class StaticDrawnTicketsExtractor(Extractor):
+    @property
+    def feature_types(self) -> list[FeatureType]:
+        return [
+            FeatureType.TICKET,
+            FeatureType.TICKET_POINTS,
+            FeatureType.TICKET_STATUS,
+        ]
+
+    def extract(self, state: ObservedState) -> Features:
+        disjoint_sets = DisjointSets()
+        for route_info in state.board.route_ownership.values():
+            if route_info.player_id == state.player.id:
+                route = ROUTES[route_info.route_id]
+                disjoint_sets.connect(route.source_city, route.destination_city)
+
+        features = []
+        for ticket in state.drawn_tickets:
+            features.extend([
+                FeatureValue(type=FeatureType.TICKET, value=ticket.id),
+                FeatureValue(type=FeatureType.TICKET_POINTS, value=ticket.value),
+                FeatureValue(
+                    type=FeatureType.TICKET_STATUS,
+                    value=disjoint_sets.are_connected(ticket.source_city, ticket.destination_city),
+                )
+            ])
+
+        return features
+
+
+DYNAMIC_EXTRACTORS: list[Extractor] = [
+    TaskTypeExtractor(include_separator=True),
+    PlayerIdExtractor(include_separator=True),
+    TrainCarsExtractor(include_separator=True),
+    VisibleCardsExtractor(include_separator=True),
+    OwnedCardsExtractor(),      # ~20
+    RouteOwnershipExtractor(),  # 100
+    OwnedTicketsExtractor(),    # 30
+    DrawnTicketsExtractor(),    # 3
+]
+
+STATIC_EXTRACTORS: list[Extractor] = [
+    TaskTypeExtractor(include_separator=False),
+    PlayerIdExtractor(include_separator=False),
+    TrainCarsExtractor(include_separator=False),
+    VisibleCardsExtractor(include_separator=False),
+    OwnedCardsCountExtractor(),
+    StaticRouteOwnershipExtractor(),
+    StaticOwnedTicketsExtractor(),
+    StaticDrawnTicketsExtractor(),
 ]

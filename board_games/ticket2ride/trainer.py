@@ -71,6 +71,7 @@ class PointsReward(Reward):
             reward = self.discount * reward + current_reward
             samples.append(
                 Sample(
+                    episode_id=raw_sample.episode_id,
                     state=raw_sample.state,
                     action=raw_sample.action,
                     score=raw_sample.score,
@@ -101,6 +102,7 @@ class WinReward(Reward):
 
         samples = [
             Sample(
+                episode_id=last_sample.episode_id,
                 state=last_sample.state,
                 action=last_sample.action,
                 score=last_sample.score,
@@ -111,6 +113,7 @@ class WinReward(Reward):
             reward = self.discount * reward
             samples.append(
                 Sample(
+                    episode_id=raw_sample.episode_id,
                     state=raw_sample.state,
                     action=raw_sample.action,
                     score=raw_sample.score,
@@ -203,8 +206,10 @@ def normalize_rewards(samples: list[Sample]) -> list[Sample]:
     rewards = [s.reward for s in samples]
     mean_reward = np.mean(rewards)
     std_reward = np.std(rewards)
+
     for s in samples:
         s.reward = (s.reward - mean_reward) / (std_reward + 1e-6)
+
     return samples
 
 
@@ -216,10 +221,10 @@ def tensor_hash(t: torch.Tensor) -> str:
 class PolicyGradientTrainer:
     def __init__(
         self,
-        env: Environment,
         model: Model,
         optimizer: torch.optim.Optimizer,
         checkpoint_path: str,
+        num_players: int,
         num_epochs: int,
         num_samples_per_epoch: int,
         num_eval_samples_per_epoch: int,
@@ -228,10 +233,10 @@ class PolicyGradientTrainer:
         checkpoint_every_n_epochs: int,
         reward_fn: Reward,
     ):
-        self.env = env
         self.model = model
         self.optimizer = optimizer
         self.checkpoint_path = checkpoint_path
+        self.num_players = num_players
         self.num_epochs = num_epochs
         self.num_samples_per_epoch = num_samples_per_epoch
         self.num_eval_samples_per_epoch = num_eval_samples_per_epoch
@@ -244,71 +249,50 @@ class PolicyGradientTrainer:
 
         self.episode_id = 0
 
-    # TODO(pauldb): Maybe make this list[Policy] so we can take actions differently for different
-    # players (e.g. using older policies).
-    def collect_episode(
-        self,
-        policy: Policy,
-        tracker: Tracker,
-        epoch_id: int,
-    ) -> dict[int, list[Sample]]:
-        raw_samples = collections.defaultdict(list)
-
-        # TODO(pauldb): Should we be sampling with a fixed seed?
-        self.episode_id += 1
-        state = self.env.reset(self.episode_id)
-
-        while True:
-            with tracker.timer("t_policy_choose_action"):
-                action = policy.choose_action(state)
-
-            with tracker.timer("t_env_step"):
-                transition = self.env.step(action)
-
-            raw_samples[state.player.id].append(RawSample(state, action, score=transition.score))
-            state = transition.state
-
-            if state.terminal:
-                break
-
-        # print("-" * 20)
-
-        samples = collections.defaultdict(list)
-        with tracker.timer("t_compute_rewards"):
-            for player_id, player_raw_samples in raw_samples.items():
-                samples[player_id] = self.reward_fn.apply(
-                    player_raw_samples, transition, epoch_id=epoch_id
-                )
-
-        return samples
-
     def collect_samples(self, tracker: Tracker, epoch_id: int) -> list[Sample]:
         self.model.eval()
         policy = StochasticModelPolicy(model=self.model)
 
+        envs = []
+        states = []
+        episodes = list(range(self.num_samples_per_epoch))
+        for episode_id in episodes:
+            env = Environment(num_players=self.num_players)
+            envs.append(env)
+            states.append(env.reset(epoch_id * self.num_samples_per_epoch + episode_id))
+
+        raw_samples: list[dict[int, list[RawSample]]] = [collections.defaultdict(list) for _ in episodes]
+        terminal_transitions: list[Transition | None] = [None for _ in episodes]
+        while episodes:
+            with tracker.timer("t_policy_choose_action"):
+                actions = policy.choose_actions([states[episode_id] for episode_id in episodes])
+
+            active_episodes = []
+            for episode_id, action in zip(episodes, actions):
+                with tracker.timer("t_env_step"):
+                    transition = envs[episode_id].step(action)
+
+                raw_samples[episode_id][action.player_id].append(
+                    RawSample(episode_id=episode_id, state=states[episode_id], action=action, score=transition.score)
+                )
+
+                if transition.state.terminal:
+                    terminal_transitions[episode_id] = transition
+                else:
+                    active_episodes.append(episode_id)
+
+                states[episode_id] = transition.state
+
+            episodes = active_episodes
+
         samples = []
-        for _ in tqdm.tqdm(range(self.num_samples_per_epoch), desc="Sample collection"):
-            with tracker.timer("t_episode"):
-                episode_samples = self.collect_episode(policy, tracker, epoch_id)
-                action_rewards = collections.defaultdict(list)
-                for player_samples in episode_samples.values():
-                    # print([(s.action.action_type.value, s.reward) for s in player_samples])
-                    for s in player_samples:
-                        action_rewards[s.action.action_type.value].append(s.reward)
-                    # for action_type, rewards in sorted(action_rewards.items()):
-                    #     print(f"{action_type} {np.mean(rewards)}")
-                    samples.extend(player_samples)
+        for per_episode_samples, terminal_transition in zip(raw_samples, terminal_transitions):
+            with tracker.timer("t_compute_rewards"):
+                for player_id, per_player_samples in per_episode_samples.items():
+                    assert terminal_transition is not None
+                    samples.extend(self.reward_fn.apply(per_player_samples, terminal_transition, epoch_id=epoch_id))
 
-        # action_counts = collections.defaultdict(int)
-        plan_rewards = collections.defaultdict(list)
-        for s in samples:
-            # action_counts[(s.action.action_type, s.action.class_id)] += 1
-            if s.action.action_type == ActionType.PLAN:
-                plan_rewards[s.action.class_id].append(s.reward)
-
-        for class_id, rewards in sorted(plan_rewards.items()):
-            print(f"{class_id=} {np.mean(rewards)=}")
-
+        samples = list(sorted(samples, key=lambda s: (s.episode_id, s.state.turn_id, s.action.player_id)))
         return normalize_rewards(samples)
 
     def train(self, samples: list[Sample], tracker: Tracker, epoch_id: int) -> None:
@@ -342,14 +326,14 @@ class PolicyGradientTrainer:
         self.model.eval()
 
         model_policy = ArgmaxModelPolicy(model=self.model)
-        random_policies = [UniformRandomPolicy(seed=0) for _ in range(self.env.num_players - 1)]
+        random_policies = [UniformRandomPolicy(seed=0) for _ in range(self.num_players - 1)]
 
         with tracker.scope("vs_random"):
             for idx in tqdm.tqdm(range(self.num_eval_samples_per_epoch), desc="Eval step"):
                 index = random.randint(0, len(random_policies))
                 policies: list[Policy] = copy.deepcopy(random_policies)
                 policies.insert(index, model_policy)
-                roller = Roller(env=self.env, policies=policies)
+                roller = Roller(env=Environment(num_players=self.num_players), policies=policies)
                 stats = roller.run(seed=idx)
 
                 actions = []

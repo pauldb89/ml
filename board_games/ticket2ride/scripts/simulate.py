@@ -4,7 +4,7 @@ from argparse import ArgumentParser
 
 import torch
 
-from board_games.ticket2ride.features import ALL_EXTRACTORS
+from board_games.ticket2ride.features import DYNAMIC_EXTRACTORS
 from board_games.ticket2ride.environment import Roller, Environment
 from board_games.ticket2ride.model import Model
 from board_games.ticket2ride.policies import KeyboardInputPolicy, ArgmaxModelPolicy, UniformRandomPolicy
@@ -24,7 +24,7 @@ def main() -> None:
     else:
         model = Model(
             device=torch.device("cuda" if torch.cuda.is_available() else "cpu"),
-            extractors=ALL_EXTRACTORS,
+            extractors=DYNAMIC_EXTRACTORS,
             layers=2,
             dim=128,
             heads=4,

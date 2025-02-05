@@ -1,6 +1,10 @@
 import itertools
 
 from board_games.ticket2ride.actions import ActionType
+from board_games.ticket2ride.actions import BuildRoute
+from board_games.ticket2ride.actions import DrawCard
+from board_games.ticket2ride.actions import DrawTickets
+from board_games.ticket2ride.actions import Plan
 from board_games.ticket2ride.board import Board
 from board_games.ticket2ride.card import Card
 from board_games.ticket2ride.color import ANY, COLORS, EXTENDED_COLORS, Color
@@ -129,3 +133,74 @@ DRAW_CARD_CLASSES = generate_card_classes()
 CHOOSE_TICKETS_CLASSES = generate_choose_ticket_classes()
 BUILD_ROUTE_CLASSES = generate_build_route_classes()
 
+
+def create_valid_actions_mask(state: ObservedState) -> list[int]:
+    valid_action_types = get_valid_actions(state)
+    return [int(action_type in valid_action_types) for action_type in PLAN_CLASSES]
+
+
+def create_draw_card_mask(state: ObservedState) -> list[int]:
+    draw_options = get_draw_card_options(state.board, state.consecutive_card_draws)
+    return [int(cls in draw_options) for cls in DRAW_CARD_CLASSES]
+
+
+def create_draw_tickets_mask(state: ObservedState) -> list[int]:
+    mask = []
+    for combo in CHOOSE_TICKETS_CLASSES:
+        mask.append(1 if len(combo) >= 2 or state.turn_id > 0 else 0)
+    return mask
+
+
+def create_build_route_mask(state: ObservedState) -> list[int]:
+    build_options = get_build_route_options(state)
+
+    valid_options = set()
+    for route_info in build_options:
+        valid_options.add((ROUTES[route_info.route_id], route_info.color))
+
+    mask = []
+    for cls in BUILD_ROUTE_CLASSES:
+        mask.append(int(cls in valid_options))
+    return mask
+
+
+def create_plan_action(state: ObservedState, class_id: int) -> Plan:
+    return Plan(
+        player_id=state.player.id,
+        action_type=ActionType.PLAN,
+        next_action_type=PLAN_CLASSES[class_id],
+        class_id=class_id,
+    )
+
+
+def create_draw_card_action(state: ObservedState, class_id: int) -> DrawCard:
+    return DrawCard(
+        player_id=state.player.id,
+        action_type=ActionType.DRAW_CARD,
+        card=DRAW_CARD_CLASSES[class_id],
+        class_id=class_id,
+    )
+
+
+def create_draw_tickets_action(state: ObservedState, class_id: int) -> DrawTickets:
+    return DrawTickets(
+        player_id=state.player.id,
+        action_type=ActionType.DRAW_TICKETS,
+        tickets=tuple(state.drawn_tickets[ticket_idx] for ticket_idx in CHOOSE_TICKETS_CLASSES[class_id]),
+        class_id=class_id,
+    )
+
+
+def create_build_route_action(state: ObservedState, class_id: int) -> BuildRoute:
+    route, color = BUILD_ROUTE_CLASSES[class_id]
+    return BuildRoute(
+        player_id=state.player.id,
+        action_type=ActionType.BUILD_ROUTE,
+        route_info=RouteInfo(
+            route_id=route.id,
+            player_id=state.player.id,
+            color=color,
+            num_any_cards=max(0, route.length - state.player.card_counts[color]),
+        ),
+        class_id=class_id,
+    )
