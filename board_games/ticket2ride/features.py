@@ -349,6 +349,9 @@ class StaticDrawnTicketsExtractor(Extractor):
         ]
 
     def extract(self, state: ObservedState) -> Features:
+        if state.drawn_tickets is None:
+            return []
+
         features = []
         for ticket in state.drawn_tickets:
             features.extend([

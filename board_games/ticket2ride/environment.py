@@ -153,7 +153,7 @@ class Environment:
                 route_points=score.route_points - prev_score.route_points,
                 ticket_points=score.ticket_points - prev_score.ticket_points,
                 completed_tickets=score.completed_tickets - prev_score.completed_tickets,
-                longest_path_bonus=score.longest_path_bonus and not prev_score.longest_path_bonus,
+                longest_path_bonus=False, #score.longest_path_bonus and not prev_score.longest_path_bonus,
                 longest_path=score.longest_path - prev_score.longest_path,
             )
         )

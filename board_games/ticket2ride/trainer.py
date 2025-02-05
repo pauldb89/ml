@@ -19,6 +19,7 @@ from board_games.ticket2ride.environment import Environment, Roller
 from board_games.ticket2ride.model import Model, RawSample, Sample
 from board_games.ticket2ride.policies import Policy, UniformRandomPolicy, \
     ArgmaxModelPolicy, StochasticModelPolicy
+from board_games.ticket2ride.render_utils import print_state
 from board_games.ticket2ride.state import PlayerScore
 from board_games.ticket2ride.state import Transition
 from board_games.ticket2ride.tracker import Tracker
@@ -309,12 +310,20 @@ class PolicyGradientTrainer:
                 actions = [sample.action for sample in per_player_samples]
                 track_action_stats(tracker, actions)
 
+            episode_length = 0
             with tracker.timer("t_compute_rewards"):
                 for per_player_samples in per_episode_samples.values():
                     assert terminal_transition is not None
+                    episode_length += len(per_player_samples)
                     samples.extend(self.reward_fn.apply(per_player_samples, terminal_transition, epoch_id=epoch_id))
 
-        samples = list(sorted(samples, key=lambda s: (s.episode_id, s.state.turn_id, s.action.player_id)))
+            tracker.log_value("episode_length", episode_length)
+
+        action_counts = collections.defaultdict(int)
+        for s in samples:
+            action_counts[(s.action.action_type, s.action.class_id)] += 1
+        tracker.log_value("unique_explored_actions", len(action_counts))
+
         return normalize_rewards(samples)
 
     def train(self, samples: list[Sample], tracker: Tracker, epoch_id: int) -> None:
