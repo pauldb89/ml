@@ -27,6 +27,7 @@ from board_games.ticket2ride.action_utils import (
     get_ticket_draw_options,
     get_valid_actions,
 )
+from board_games.ticket2ride.actions import Prediction
 from board_games.ticket2ride.model import Model
 from board_games.ticket2ride.render_utils import print_state, read_option
 from board_games.ticket2ride.state import ObservedState
@@ -194,9 +195,17 @@ class ModelPolicy(Policy):
         return [grouped_actions[action_type][idx] for action_type, idx in action_index]
 
     def infer_actions(self, action_type: ActionType, states: list[ObservedState]) -> list[Action]:
-        logits = self.model(states=states, head=action_type, mask=self.create_mask(action_type, states))
+        logits, values = self.model(states=states, head=action_type, mask=self.create_mask(action_type, states))
         class_ids = self.classify(logits)
-        return self.create_actions(action_type, states, class_ids)
+        log_probs = torch.log_softmax(logits, dim=-1)
+        class_log_probs = log_probs.gather(dim=1, index=class_ids.unsqueeze(dim=1)).squeeze(dim=1)
+        return self.create_actions(
+            action_type,
+            states,
+            class_ids=class_ids.detach().cpu().numpy().tolist(),
+            log_probs=class_log_probs.detach().cpu().numpy().tolist(),
+            values=values.detach().cpu().numpy().tolist(),
+        )
 
     def create_mask(self, action_type: ActionType, states: list[ObservedState]) -> torch.Tensor:
         mask_fns = {
@@ -213,6 +222,8 @@ class ModelPolicy(Policy):
         action_type: ActionType,
         states: list[ObservedState],
         class_ids: list[int],
+        log_probs: list[float],
+        values: list[float],
     ) -> list[Action]:
         create_fns = {
             ActionType.PLAN: create_plan_action,
@@ -221,18 +232,21 @@ class ModelPolicy(Policy):
             ActionType.BUILD_ROUTE: create_build_route_action,
         }
         create_fn = create_fns[action_type]
-        return [create_fn(state, class_id) for state, class_id in zip(states, class_ids)]
+        return [
+            create_fn(state, Prediction(class_id=class_id, log_prob=log_prob, value=value))
+            for state, class_id, log_prob, value in zip(states, class_ids, log_probs, values)
+        ]
 
     @abc.abstractmethod
-    def classify(self, logits: torch.Tensor) -> list[int]:
+    def classify(self, logits: torch.Tensor) -> torch.Tensor:
         ...
 
 
 class StochasticModelPolicy(ModelPolicy):
-    def classify(self, logits: torch.Tensor) -> list[int]:
-        return torch.distributions.Categorical(logits=logits).sample().detach().cpu().numpy().tolist()
+    def classify(self, logits: torch.Tensor) -> torch.Tensor:
+        return torch.distributions.Categorical(logits=logits).sample()
 
 
 class ArgmaxModelPolicy(ModelPolicy):
-    def classify(self, logits: torch.Tensor) -> int:
-        return torch.argmax(logits, dim=-1).detach().cpu().numpy().tolist()
+    def classify(self, logits: torch.Tensor) -> torch.Tensor:
+        return torch.argmax(logits, dim=-1)

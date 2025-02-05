@@ -246,6 +246,7 @@ class PolicyGradientTrainer:
         batch_size: int,
         evaluate_every_n_epochs: int,
         checkpoint_every_n_epochs: int,
+        value_loss_weight: float,
         reward_fn: Reward,
     ):
         self.model = model
@@ -258,6 +259,7 @@ class PolicyGradientTrainer:
         self.batch_size = batch_size
         self.evaluate_every_n_epochs = evaluate_every_n_epochs
         self.checkpoint_every_n_epochs = checkpoint_every_n_epochs
+        self.value_loss_weight = value_loss_weight
         self.reward_fn = reward_fn
 
         self.scaler = GradScaler(init_scale=2.**16)
@@ -333,24 +335,43 @@ class PolicyGradientTrainer:
 
         num_batches = 0
         losses = []
+        policy_losses = []
+        value_losses = []
         for start_index in tqdm.tqdm(range(0, len(samples), self.batch_size), desc="Train step"):
             num_batches += 1
             batch_samples = samples[start_index:start_index + self.batch_size]
 
             with torch.cuda.amp.autocast():
-                loss = len(batch_samples) / len(samples) * self.model.loss(batch_samples)
+                batch_weight = len(batch_samples) / len(samples)
+                policy_loss, value_loss = self.model.loss(batch_samples)
+
+                policy_loss *= batch_weight
+                policy_losses.append(policy_loss)
+
+                value_loss *= batch_weight
+                value_losses.append(value_loss)
+
+                loss = policy_loss + self.value_loss_weight * value_loss
                 assert torch.isnan(loss).sum() == 0
                 losses.append(loss)
+
                 loss = self.scaler.scale(loss)
                 loss.backward()
 
         self.scaler.step(self.optimizer)
         self.scaler.update()
 
+        total_policy_loss = sum(policy_losses)
+        tracker.log_value("policy_loss", total_policy_loss.item())
+
+        total_value_loss = sum(value_losses)
+        tracker.log_value("value_loss", total_value_loss.item())
+
         total_loss = sum(losses)
+        tracker.log_value("loss", total_loss.item())
         loss_hash = tensor_hash(total_loss)
         wandb.log({"loss_hash": loss_hash}, step=epoch_id)
-        tracker.log_value("loss", total_loss.item())
+
         tracker.log_value("num_batches", num_batches)
 
     def evaluate(self, tracker: Tracker, epoch_id: int) -> None:

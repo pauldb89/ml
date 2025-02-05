@@ -164,35 +164,35 @@ def create_build_route_mask(state: ObservedState) -> list[int]:
     return mask
 
 
-def create_plan_action(state: ObservedState, class_id: int) -> Plan:
+def create_plan_action(state: ObservedState, prediction: Prediction) -> Plan:
     return Plan(
         player_id=state.player.id,
         action_type=ActionType.PLAN,
-        next_action_type=PLAN_CLASSES[class_id],
-        prediction=Prediction(class_id=class_id, log_prob=0, value=0),
+        next_action_type=PLAN_CLASSES[prediction.class_id],
+        prediction=prediction,
     )
 
 
-def create_draw_card_action(state: ObservedState, class_id: int) -> DrawCard:
+def create_draw_card_action(state: ObservedState, prediction: Prediction) -> DrawCard:
     return DrawCard(
         player_id=state.player.id,
         action_type=ActionType.DRAW_CARD,
-        card=DRAW_CARD_CLASSES[class_id],
-        prediction=Prediction(class_id=class_id, log_prob=0, value=0),
+        card=DRAW_CARD_CLASSES[prediction.class_id],
+        prediction=prediction,
     )
 
 
-def create_draw_tickets_action(state: ObservedState, class_id: int) -> DrawTickets:
+def create_draw_tickets_action(state: ObservedState, prediction: Prediction) -> DrawTickets:
     return DrawTickets(
         player_id=state.player.id,
         action_type=ActionType.DRAW_TICKETS,
-        tickets=tuple(state.drawn_tickets[ticket_idx] for ticket_idx in CHOOSE_TICKETS_CLASSES[class_id]),
-        prediction=Prediction(class_id=class_id, log_prob=0, value=0),
+        tickets=tuple(state.drawn_tickets[ticket_idx] for ticket_idx in CHOOSE_TICKETS_CLASSES[prediction.class_id]),
+        prediction=prediction,
     )
 
 
-def create_build_route_action(state: ObservedState, class_id: int) -> BuildRoute:
-    route, color = BUILD_ROUTE_CLASSES[class_id]
+def create_build_route_action(state: ObservedState, prediction: Prediction) -> BuildRoute:
+    route, color = BUILD_ROUTE_CLASSES[prediction.class_id]
     return BuildRoute(
         player_id=state.player.id,
         action_type=ActionType.BUILD_ROUTE,
@@ -202,5 +202,5 @@ def create_build_route_action(state: ObservedState, class_id: int) -> BuildRoute
             color=color,
             num_any_cards=max(0, route.length - state.player.card_counts[color]),
         ),
-        prediction=Prediction(class_id=class_id, log_prob=0, value=0),
+        prediction=prediction,
     )

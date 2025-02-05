@@ -177,7 +177,8 @@ class Model(nn.Module):
 
         self.norm = nn.LayerNorm(dim, eps=1e-6)
 
-        self.heads = nn.ModuleDict({
+        self.value_head = nn.Linear(dim, 1)
+        self.action_heads = nn.ModuleDict({
             ActionType.PLAN: nn.Linear(dim, len(PLAN_CLASSES)),
             ActionType.DRAW_CARD: nn.Linear(dim, len(DRAW_CARD_CLASSES)),
             ActionType.DRAW_TICKETS: nn.Linear(dim, len(CHOOSE_TICKETS_CLASSES)),
@@ -198,38 +199,47 @@ class Model(nn.Module):
         states: list[ObservedState],
         head: ActionType,
         mask: torch.Tensor | None = None,
-    ) -> torch.Tensor:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         x, seq_mask = self.embeddings(states)
         for block in self.blocks:
             x = block(x, seq_mask)
 
         x = self.norm(x)[:, 0, :]
-        logits = self.heads[head](x)
 
-        if mask is None:
-            return logits
+        logits = self.action_heads[head](x)
+        if mask is not None:
+            logits = logits.masked_fill(mask.to(self.device) == 0, value=float("-inf"))
 
-        return logits.masked_fill(mask.to(self.device) == 0, value=float("-inf"))
+        values = self.value_head(x).squeeze(dim=-1)
 
-    def loss(self, samples: list[Sample]) -> torch.Tensor:
+        return logits, values
+
+    def loss(self, samples: list[Sample]) -> tuple[torch.Tensor, torch.Tensor]:
         grouped_samples = collections.defaultdict(list)
         for sample in samples:
             grouped_samples[sample.state.next_action].append(sample)
 
-        losses = []
-        weights = []
+        policy_loss_terms = []
+        values = []
+        rewards = []
         for action_type, group in grouped_samples.items():
             states = []
             targets = []
             for sample in group:
                 states.append(sample.state)
-                weights.append(sample.reward)
+                rewards.append(sample.reward)
                 assert sample.action.prediction is not None
                 targets.append(sample.action.prediction.class_id)
 
-            logits = self(states, head=action_type)
+            group_logits, group_values = self(states, head=action_type)
             targets = torch.tensor(targets, dtype=torch.long, device=self.device)
-            loss_terms = F.cross_entropy(logits, targets, reduction="none")
-            losses.append(loss_terms)
+            # Note(pauldb): The action heads have different number of classes so we can't simply stack the logits
+            # and compute the policy loss once like we do for the value loss.
+            policy_loss_terms.append(F.cross_entropy(group_logits, targets, reduction="none"))
+            values.append(group_values)
 
-        return (torch.cat(losses, dim=0) * torch.tensor(weights, device=self.device)).mean()
+        policy_loss_terms = torch.cat(policy_loss_terms, dim=0)
+        rewards = torch.tensor(rewards, device=self.device, dtype=torch.half)
+        values = torch.cat(values, dim=0)
+
+        return (policy_loss_terms * rewards).mean(), F.mse_loss(values, rewards)

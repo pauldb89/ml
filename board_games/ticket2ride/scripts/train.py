@@ -37,6 +37,7 @@ def main() -> None:
     parser.add_argument("--final_draw_card_reward", type=float, default=0.0, help="Final draw card reward")
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
     parser.add_argument("--extractors", type=str, default="dynamic", choices=["dynamic", "static"], help="Feature set")
+    parser.add_argument("--value_loss_weight", type=float, default=0, help="Loss weight for learning value function")
     args = parser.parse_args()
 
     random.seed(args.seed)
@@ -76,6 +77,7 @@ def main() -> None:
         batch_size=args.batch_size,
         evaluate_every_n_epochs=args.evaluate_every_n_epochs,
         checkpoint_every_n_epochs=args.checkpoint_every_n_epochs,
+        value_loss_weight=args.value_loss_weight,
         reward_fn=PointsReward(
             discount=args.discount,
             initial_draw_card_reward=args.initial_draw_card_reward,
