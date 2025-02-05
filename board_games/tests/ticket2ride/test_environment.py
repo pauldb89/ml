@@ -17,7 +17,7 @@ def test_determinism_uniform_random() -> None:
     stats = game.run(seed=0)
     for player_score in stats.scorecard:
         print(f"{player_score=}")
-    assert [player_score.total_points for player_score in stats.scorecard] == [-53, -79]
+    assert [player_score.total_points for player_score in stats.scorecard] == [-27, -93]
 
 
 def test_determinism_model() -> None:
@@ -36,4 +36,4 @@ def test_determinism_model() -> None:
         policies=[ArgmaxModelPolicy(model=model) for _ in range(2)]
     )
     stats = game.run(seed=0)
-    assert [player_score.total_points for player_score in stats.scorecard] == [-28, -73]
+    assert [player_score.total_points for player_score in stats.scorecard] == [-48, -80]

@@ -1,3 +1,4 @@
+import random
 from typing import Callable, Protocol, Self
 
 import pytest
@@ -34,7 +35,7 @@ def assert_item_count_equal() -> Callable[[list[Comparable | None], list[Compara
 
 
 def test_get_valid_actions(assert_item_count_equal: Callable[[list, list], None]) -> None:
-    board = Board(num_players=2)
+    board = Board(num_players=2, rng=random.Random(0))
     assert len(board.visible_cards) == 5
     assert len(board.ticket_deck) == 30
 
@@ -65,41 +66,35 @@ def test_get_valid_actions(assert_item_count_equal: Callable[[list, list], None]
 
     state.board.visible_cards = []
     state.board.card_deck.deck = [Card(color=ANY)]
-    assert_item_count_equal(get_valid_actions(state), [])
+    assert_item_count_equal(get_valid_actions(state), [ActionType.PLAN])
 
 
 def test_get_draw_card_options(assert_item_count_equal: Callable[[list, list], None]) -> None:
-    board = Board(num_players=2)
+    board = Board(num_players=2, rng=random.Random(0))
     board.visible_cards = [
         Card(color=WHITE), Card(color=BLACK), Card(color=WHITE), Card(color=ANY), Card(color=BLACK)
     ]
 
-    state = ObservedState(board=board, player=Player(player_id=0), action_type=ActionType.PLAN)
-
-    state.consecutive_card_draws = 0
-    draw_options = get_draw_card_options(state)
+    draw_options = get_draw_card_options(board, consecutive_card_draws=0)
     expected_options = [Card(color=WHITE), Card(color=BLACK), Card(color=ANY), None]
     assert_item_count_equal(draw_options, expected_options)
 
-    state.consecutive_card_draws = 1
-    draw_options = get_draw_card_options(state)
+    draw_options = get_draw_card_options(board, consecutive_card_draws=1)
     expected_options = [Card(color=WHITE), Card(color=BLACK), None]
     assert_item_count_equal(draw_options, expected_options)
 
-    state.consecutive_card_draws = 0
-    state.board.card_deck.deck = []
-    draw_options = get_draw_card_options(state)
+    board.card_deck.deck = []
+    draw_options = get_draw_card_options(board, consecutive_card_draws=0)
     expected_options = [Card(color=WHITE), Card(color=BLACK), Card(color=ANY)]
     assert_item_count_equal(draw_options, expected_options)
 
-    state.consecutive_card_draws = 1
-    draw_options = get_draw_card_options(state)
+    draw_options = get_draw_card_options(board, consecutive_card_draws=1)
     expected_options = [Card(color=WHITE), Card(color=BLACK)]
     assert_item_count_equal(draw_options, expected_options)
 
 
 def test_get_build_route_options(assert_item_count_equal: Callable[[list, list], None]) -> None:
-    board = Board(num_players=2)
+    board = Board(num_players=2, rng=random.Random(0))
     player = Player(player_id=0, card_counts={ANY: 1, WHITE: 4, RED: 1})
     board.train_cars[player.id] = 3
     board.route_ownership = {
