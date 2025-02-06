@@ -17,6 +17,7 @@ class ActionType(StrEnum):
 class Prediction:
     class_id: int
     log_prob: float
+    # The value function estimate for the source state (the state we are taking the action *from*).
     value: float
 
 

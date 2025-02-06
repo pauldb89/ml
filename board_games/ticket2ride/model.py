@@ -15,16 +15,14 @@ from board_games.ticket2ride.state import ObservedState, Score
 
 
 @dataclass
-class RawSample:
+class Sample:
     episode_id: int
     state: ObservedState
     action: Action
     score: Score
-
-
-@dataclass
-class Sample(RawSample):
-    reward: float
+    reward: float = 0
+    long_term_return: float = 0
+    advantage: float = 0
 
 
 class EmbeddingTable(nn.Module):
@@ -221,13 +219,15 @@ class Model(nn.Module):
 
         policy_loss_terms = []
         values = []
-        rewards = []
+        advantages = []
+        returns = []
         for action_type, group in grouped_samples.items():
             states = []
             targets = []
             for sample in group:
                 states.append(sample.state)
-                rewards.append(sample.reward)
+                advantages.append(sample.advantage)
+                returns.append(sample.long_term_return)
                 assert sample.action.prediction is not None
                 targets.append(sample.action.prediction.class_id)
 
@@ -239,7 +239,8 @@ class Model(nn.Module):
             values.append(group_values)
 
         policy_loss_terms = torch.cat(policy_loss_terms, dim=0)
-        rewards = torch.tensor(rewards, device=self.device, dtype=torch.half)
+        advantages = torch.tensor(advantages, device=self.device, dtype=torch.half)
+        returns = torch.tensor(returns, device=self.device, dtype=torch.half)
         values = torch.cat(values, dim=0)
 
-        return (policy_loss_terms * rewards).mean(), F.mse_loss(values, rewards)
+        return (policy_loss_terms * advantages).mean(), F.mse_loss(values, returns)

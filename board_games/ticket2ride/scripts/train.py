@@ -9,7 +9,7 @@ import torch
 from board_games.ticket2ride.features import DYNAMIC_EXTRACTORS
 from board_games.ticket2ride.features import STATIC_EXTRACTORS
 from board_games.ticket2ride.model import Model
-from board_games.ticket2ride.trainer import PolicyGradientTrainer, PointsReward
+from board_games.ticket2ride.trainer import PolicyGradientTrainer, Reward
 
 
 def main() -> None:
@@ -32,7 +32,9 @@ def main() -> None:
     parser.add_argument("--layers", type=int, default=6, help="Number of layers")
     parser.add_argument("--heads", type=int, default=8, help="Number of heads")
     parser.add_argument("--rel_window", type=int, default=100, help="Relative window size")
-    parser.add_argument("--discount", type=float, default=0.95, help="Discount factor")
+    parser.add_argument("--gae_lambda", type=float, default=0.95, help="Lambda parameter for TD-lambda in GAE")
+    parser.add_argument("--reward_discount", type=float, default=0.95, help="Reward discount factor")
+    parser.add_argument("--win_reward", type=float, default=0, help="Reward for winning in points")
     parser.add_argument("--initial_draw_card_reward", type=float, default=2.0, help="Initial draw card reward")
     parser.add_argument("--final_draw_card_reward", type=float, default=0.0, help="Final draw card reward")
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
@@ -78,12 +80,14 @@ def main() -> None:
         evaluate_every_n_epochs=args.evaluate_every_n_epochs,
         checkpoint_every_n_epochs=args.checkpoint_every_n_epochs,
         value_loss_weight=args.value_loss_weight,
-        reward_fn=PointsReward(
-            discount=args.discount,
+        reward_fn=Reward(
+            win_reward=args.win_reward,
             initial_draw_card_reward=args.initial_draw_card_reward,
             final_draw_card_reward=args.final_draw_card_reward,
             draw_card_horizon_epochs=args.epochs // 2,
         ),
+        reward_discount=args.reward_discount,
+        gae_lambda=args.gae_lambda,
     )
     trainer.execute()
     wandb.finish()

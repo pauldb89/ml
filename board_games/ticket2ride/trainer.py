@@ -1,4 +1,3 @@
-import abc
 import collections
 import copy
 import hashlib
@@ -16,61 +15,46 @@ from torch.cuda.amp import GradScaler
 from board_games.ticket2ride.actions import ActionType, Action, DrawCard
 from board_games.ticket2ride.color import ANY
 from board_games.ticket2ride.environment import Environment, Roller
-from board_games.ticket2ride.model import Model, RawSample, Sample
-from board_games.ticket2ride.policies import Policy, UniformRandomPolicy, \
-    ArgmaxModelPolicy, StochasticModelPolicy
-from board_games.ticket2ride.render_utils import print_state
+from board_games.ticket2ride.model import Model, Sample
+from board_games.ticket2ride.policies import Policy, UniformRandomPolicy, ArgmaxModelPolicy, StochasticModelPolicy
 from board_games.ticket2ride.state import PlayerScore
 from board_games.ticket2ride.state import Transition
 from board_games.ticket2ride.tracker import Tracker
 
 
-# TODO(pauldb): Make rewards zero sum subtracting opponent average reward?
-class Reward(abc.ABC):
-    @abc.abstractmethod
-    def apply(
-        self,
-        raw_samples: list[RawSample],
-        final_transition: Transition,
-        epoch_id: int,
-    ) -> list[Sample]:
-        ...
-
-
-class PointsReward(Reward):
+class Reward:
     def __init__(
         self,
-        discount: float,
+        win_reward: float,
         initial_draw_card_reward: float,
         final_draw_card_reward: float,
         draw_card_horizon_epochs: int,
     ) -> None:
         super().__init__()
-        self.discount = discount
+        self.win_reward = win_reward
         self.initial_draw_card_reward = initial_draw_card_reward
         self.final_draw_card_reward = final_draw_card_reward
         self.draw_card_horizon_epochs = draw_card_horizon_epochs
 
     def apply(
         self,
-        raw_samples: list[RawSample],
+        player_samples: list[Sample],
         final_transition: Transition,
         epoch_id: int,
     ) -> list[Sample]:
-        del final_transition
-
         samples = []
-        reward = 0
         rate = min(epoch_id / self.draw_card_horizon_epochs, 1)
-        draw_card_bonus = (
-            (1 - rate) * self.initial_draw_card_reward + rate * self.final_draw_card_reward
-        )
-        for raw_sample in reversed(raw_samples):
-            current_reward = raw_sample.score.turn_score.total_points
+        draw_card_bonus = (1 - rate) * self.initial_draw_card_reward + rate * self.final_draw_card_reward
+        for idx, raw_sample in enumerate(reversed(player_samples)):
+            reward = raw_sample.score.turn_score.total_points
             if raw_sample.action.action_type == ActionType.DRAW_CARD:
-                current_reward += draw_card_bonus
+                reward += draw_card_bonus
+            if idx == 0:
+                if final_transition.score.winner_id == raw_sample.action.player_id:
+                    reward += self.win_reward
+                else:
+                    reward -= self.win_reward
 
-            reward = self.discount * reward + current_reward
             samples.append(
                 Sample(
                     episode_id=raw_sample.episode_id,
@@ -82,88 +66,6 @@ class PointsReward(Reward):
             )
 
         return list(reversed(samples))
-
-
-class WinReward(Reward):
-    def __init__(self, discount: float, reward: int) -> None:
-        super().__init__()
-        self.discount = discount
-        self.reward = reward
-
-    def apply(
-        self,
-        raw_samples: list[RawSample],
-        final_transition: Transition,
-        epoch_id: int,
-    ) -> list[Sample]:
-        last_sample = raw_samples[-1]
-        if final_transition.score.winner_id == last_sample.state.player.id:
-            reward = self.reward
-        else:
-            reward = -self.reward
-
-        samples = [
-            Sample(
-                episode_id=last_sample.episode_id,
-                state=last_sample.state,
-                action=last_sample.action,
-                score=last_sample.score,
-                reward=reward,
-            )
-        ]
-        for raw_sample in reversed(raw_samples[:-1]):
-            reward = self.discount * reward
-            samples.append(
-                Sample(
-                    episode_id=raw_sample.episode_id,
-                    state=raw_sample.state,
-                    action=raw_sample.action,
-                    score=raw_sample.score,
-                    reward=reward,
-                )
-            )
-
-        return list(reversed(samples))
-
-
-class MixedReward(Reward):
-    def __init__(
-        self,
-        initial_reward: Reward,
-        final_reward: Reward,
-        num_epochs: int,
-    ) -> None:
-        super().__init__()
-        self.initial_reward = initial_reward
-        self.final_reward = final_reward
-        self.num_epochs = num_epochs
-
-    def apply(
-        self,
-        raw_samples: list[RawSample],
-        final_transition: Transition,
-        epoch_id: int,
-    ) -> list[Sample]:
-        samples = []
-        initial_reward_samples = self.initial_reward.apply(raw_samples, final_transition, epoch_id)
-        final_reward_samples = self.final_reward.apply(raw_samples, final_transition, epoch_id)
-        for initial_sample, final_sample in zip(initial_reward_samples, final_reward_samples):
-            assert initial_sample.state == final_sample.state
-            assert initial_sample.action == final_sample.action
-            assert initial_sample.score == final_sample.score
-
-            alpha = epoch_id / (self.num_epochs - 1)
-            reward = initial_sample.reward * (1 - alpha) + final_sample.reward * alpha
-            sample = Sample(
-                episode_id=initial_sample.episode_id,
-                state=initial_sample.state,
-                action=initial_sample.action,
-                score=initial_sample.score,
-                reward=reward,
-            )
-            samples.append(sample)
-
-        return samples
 
 
 def track_action_stats(tracker: Tracker, actions: list[Action]) -> None:
@@ -217,13 +119,12 @@ def track_score_stats(tracker: Tracker, score: PlayerScore) -> None:
             tracker.log_value(f"completed_routes_length", length)
 
 
-def normalize_rewards(samples: list[Sample]) -> list[Sample]:
-    rewards = [s.reward for s in samples]
-    mean_reward = np.mean(rewards)
-    std_reward = np.std(rewards)
-
-    for s in samples:
-        s.reward = (s.reward - mean_reward) / (std_reward + 1e-6)
+def normalize(samples: list[Sample], fields: list[str]) -> list[Sample]:
+    for field in fields:
+        values = [getattr(sample, field) for sample in samples]
+        mean, std = np.mean(values), np.std(values)
+        for sample, value in zip(samples, values):
+            setattr(sample, field, (value - mean) / (std + 1e-8))
 
     return samples
 
@@ -248,6 +149,8 @@ class PolicyGradientTrainer:
         checkpoint_every_n_epochs: int,
         value_loss_weight: float,
         reward_fn: Reward,
+        reward_discount: float,
+        gae_lambda: float,
     ):
         self.model = model
         self.optimizer = optimizer
@@ -261,10 +164,26 @@ class PolicyGradientTrainer:
         self.checkpoint_every_n_epochs = checkpoint_every_n_epochs
         self.value_loss_weight = value_loss_weight
         self.reward_fn = reward_fn
+        # Often denoted as gamma, used to compute long term reward from a particular state:
+        # G_t = r_t + \gamma * r_{t+1} + \gamma^2 * r_{t+2} + ...
+        self.reward_discount = reward_discount
+        self.gae_lambda = gae_lambda
 
         self.scaler = GradScaler(init_scale=2.**16)
 
         self.episode_id = 0
+
+    def compute_advantages(self, player_samples: list[Sample], terminal_value: float) -> list[Sample]:
+        next_state_value = terminal_value
+        advantage = 0
+        for sample in reversed(player_samples):
+            current_value = sample.action.prediction.value
+            td_error = sample.reward + self.reward_discount * next_state_value - current_value
+            sample.advantage = td_error + advantage * self.reward_discount * self.gae_lambda
+            sample.long_term_reward = sample.advantage + current_value
+            next_state_value = current_value
+
+        return player_samples
 
     def collect_samples(self, tracker: Tracker, epoch_id: int) -> list[Sample]:
         self.model.eval()
@@ -278,7 +197,7 @@ class PolicyGradientTrainer:
             envs.append(env)
             states.append(env.reset(epoch_id * self.num_samples_per_epoch + episode_id))
 
-        raw_samples: list[dict[int, list[RawSample]]] = [collections.defaultdict(list) for _ in episodes]
+        raw_samples: list[dict[int, list[Sample]]] = [collections.defaultdict(list) for _ in episodes]
         terminal_transitions: list[Transition | None] = [None for _ in episodes]
         while episodes:
             with tracker.timer("t_policy_choose_action"):
@@ -290,7 +209,7 @@ class PolicyGradientTrainer:
                     transition = envs[episode_id].step(action)
 
                 raw_samples[episode_id][action.player_id].append(
-                    RawSample(episode_id=episode_id, state=states[episode_id], action=action, score=transition.score)
+                    Sample(episode_id=episode_id, state=states[episode_id], action=action, score=transition.score)
                 )
 
                 if transition.state.terminal:
@@ -306,18 +225,30 @@ class PolicyGradientTrainer:
             for score in transition.score.scorecard:
                 track_score_stats(tracker, score)
 
+        terminal_states = [transition.state for transition in terminal_transitions]
+        terminal_values = [action.prediction.value for action in policy.choose_actions(terminal_states)]
+
         samples = []
-        for per_episode_samples, terminal_transition in zip(raw_samples, terminal_transitions):
-            for per_player_samples in per_episode_samples.values():
-                actions = [sample.action for sample in per_player_samples]
+        for per_episode_samples, terminal_transition, terminal_value in zip(raw_samples, terminal_transitions, terminal_values):
+            for per_player_raw_samples in per_episode_samples.values():
+                actions = [sample.action for sample in per_player_raw_samples]
                 track_action_stats(tracker, actions)
 
             episode_length = 0
             with tracker.timer("t_compute_rewards"):
-                for per_player_samples in per_episode_samples.values():
+                for per_player_raw_samples in per_episode_samples.values():
                     assert terminal_transition is not None
-                    episode_length += len(per_player_samples)
-                    samples.extend(self.reward_fn.apply(per_player_samples, terminal_transition, epoch_id=epoch_id))
+                    episode_length += len(per_player_raw_samples)
+
+                    per_player_samples = self.reward_fn.apply(
+                        per_player_raw_samples,
+                        terminal_transition,
+                        epoch_id=epoch_id,
+                    )
+                    per_player_samples = normalize(per_player_samples, fields=["reward"])
+                    per_player_samples = self.compute_advantages(per_player_samples, terminal_value)
+                    per_player_samples = normalize(per_player_samples, fields=["long_term_return", "advantage"])
+                    samples.extend(per_player_samples)
 
             tracker.log_value("episode_length", episode_length)
 
@@ -326,7 +257,7 @@ class PolicyGradientTrainer:
             action_counts[(s.action.action_type, s.action.prediction.class_id)] += 1
         tracker.log_value("unique_explored_actions", len(action_counts))
 
-        return normalize_rewards(samples)
+        return samples
 
     def train(self, samples: list[Sample], tracker: Tracker, epoch_id: int) -> None:
         self.model.train()
