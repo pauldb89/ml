@@ -2,22 +2,24 @@ import random
 
 import torch
 
+from board_games.ticket2ride.environment import BatchRoller
 from board_games.ticket2ride.features import DYNAMIC_EXTRACTORS
-from board_games.ticket2ride.environment import Roller, Environment
 from board_games.ticket2ride.model import Model
 from board_games.ticket2ride.policies import UniformRandomPolicy, ArgmaxModelPolicy
+from board_games.ticket2ride.tracker import Tracker
 
 
 def test_determinism_uniform_random() -> None:
     random.seed(0)
-    game = Roller(
-        env=Environment(num_players=2),
-        policies=[UniformRandomPolicy(seed=0) for _ in range(2)]
+    roller = BatchRoller()
+    transitions = roller.run(
+        seeds=[0],
+        policies=[UniformRandomPolicy(seed=0)],
+        player_policy_ids=[[0, 0]],
+        tracker=Tracker()
     )
-    stats = game.run(seed=0)
-    for player_score in stats.scorecard:
-        print(f"{player_score=}")
-    assert [player_score.total_points for player_score in stats.scorecard] == [-27, -93]
+    scorecard = transitions[0][-1].score.scorecard
+    assert [player_score.total_points for player_score in scorecard] == [-27, -93]
 
 
 def test_determinism_model() -> None:
@@ -31,9 +33,12 @@ def test_determinism_model() -> None:
         heads=4,
         rel_window=10,
     )
-    game = Roller(
-        env=Environment(num_players=2),
-        policies=[ArgmaxModelPolicy(model=model) for _ in range(2)]
+    roller = BatchRoller()
+    transitions = roller.run(
+        seeds=[0],
+        policies=[ArgmaxModelPolicy(model=model)],
+        player_policy_ids=[[0, 0]],
+        tracker=Tracker()
     )
-    stats = game.run(seed=0)
-    assert [player_score.total_points for player_score in stats.scorecard] == [-48, -80]
+    scorecard = transitions[0][-1].score.scorecard
+    assert [player_score.total_points for player_score in scorecard] == [-48, -80]

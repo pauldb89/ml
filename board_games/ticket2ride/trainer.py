@@ -14,9 +14,9 @@ from torch.cuda.amp import GradScaler
 
 from board_games.ticket2ride.actions import ActionType, Action, DrawCard
 from board_games.ticket2ride.color import ANY
-from board_games.ticket2ride.environment import Environment, Roller
+from board_games.ticket2ride.environment import BatchRoller
 from board_games.ticket2ride.model import Model, Sample
-from board_games.ticket2ride.policies import Policy, UniformRandomPolicy, ArgmaxModelPolicy, StochasticModelPolicy
+from board_games.ticket2ride.policies import UniformRandomPolicy, ArgmaxModelPolicy, StochasticModelPolicy
 from board_games.ticket2ride.state import PlayerScore
 from board_games.ticket2ride.state import Transition
 from board_games.ticket2ride.tracker import Tracker
@@ -29,12 +29,14 @@ class Reward:
         initial_draw_card_reward: float,
         final_draw_card_reward: float,
         draw_card_horizon_epochs: int,
+        reward_scale: float,
     ) -> None:
         super().__init__()
         self.win_reward = win_reward
         self.initial_draw_card_reward = initial_draw_card_reward
         self.final_draw_card_reward = final_draw_card_reward
         self.draw_card_horizon_epochs = draw_card_horizon_epochs
+        self.reward_scale = reward_scale
 
     def apply(
         self,
@@ -61,7 +63,7 @@ class Reward:
                     state=raw_sample.state,
                     action=raw_sample.action,
                     score=raw_sample.score,
-                    reward=reward,
+                    reward=reward * self.reward_scale,
                 )
             )
 
@@ -119,16 +121,6 @@ def track_score_stats(tracker: Tracker, score: PlayerScore) -> None:
             tracker.log_value(f"completed_routes_length", length)
 
 
-def normalize(samples: list[Sample], fields: list[str]) -> list[Sample]:
-    for field in fields:
-        values = [getattr(sample, field) for sample in samples]
-        mean, std = np.mean(values), np.std(values)
-        for sample, value in zip(samples, values):
-            setattr(sample, field, (value - mean) / (std + 1e-8))
-
-    return samples
-
-
 def tensor_hash(t: torch.Tensor) -> str:
     data = t.detach().cpu().numpy().tobytes()
     return hashlib.sha256(data).hexdigest()
@@ -142,8 +134,8 @@ class PolicyGradientTrainer:
         checkpoint_path: str,
         num_players: int,
         num_epochs: int,
-        num_samples_per_epoch: int,
-        num_eval_samples_per_epoch: int,
+        num_episodes_per_epoch: int,
+        num_eval_episodes_per_epoch: int,
         batch_size: int,
         evaluate_every_n_epochs: int,
         checkpoint_every_n_epochs: int,
@@ -157,8 +149,8 @@ class PolicyGradientTrainer:
         self.checkpoint_path = checkpoint_path
         self.num_players = num_players
         self.num_epochs = num_epochs
-        self.num_samples_per_epoch = num_samples_per_epoch
-        self.num_eval_samples_per_epoch = num_eval_samples_per_epoch
+        self.num_episodes_per_epoch = num_episodes_per_epoch
+        self.num_eval_episodes_per_epoch = num_eval_episodes_per_epoch
         self.batch_size = batch_size
         self.evaluate_every_n_epochs = evaluate_every_n_epochs
         self.checkpoint_every_n_epochs = checkpoint_every_n_epochs
@@ -173,82 +165,106 @@ class PolicyGradientTrainer:
 
         self.episode_id = 0
 
-    def compute_advantages(self, player_samples: list[Sample], terminal_value: float) -> list[Sample]:
-        next_state_value = terminal_value
+    def compute_advantages(self, player_samples: list[Sample]) -> list[Sample]:
+        # next_state_value = terminal_value
+        next_state_value = 0
+        long_term_return = 0
         advantage = 0
+        advantages = []
         for sample in reversed(player_samples):
+            sample.long_term_return = sample.reward + long_term_return * self.reward_discount
+
             current_value = sample.action.prediction.value
             td_error = sample.reward + self.reward_discount * next_state_value - current_value
             sample.advantage = td_error + advantage * self.reward_discount * self.gae_lambda
-            sample.long_term_reward = sample.advantage + current_value
+            sample.estimated_return = sample.advantage + current_value
+
             next_state_value = current_value
+            long_term_return = sample.long_term_return
+            advantage = sample.advantage
+            advantages.append(advantage)
+
+        mean, std = np.mean(advantages), np.std(advantages)
+        for sample in player_samples:
+            sample.advantage = (sample.advantage - mean) / (std + 1e-8)
 
         return player_samples
 
     def collect_samples(self, tracker: Tracker, epoch_id: int) -> list[Sample]:
         self.model.eval()
-        policy = StochasticModelPolicy(model=self.model)
+        # envs = []
+        # states = []
+        # episodes = list(range(self.num_samples_per_epoch))
+        # for episode_id in episodes:
+        #     env = Environment(num_players=self.num_players)
+        #     envs.append(env)
+        #     states.append(env.reset(epoch_id * self.num_samples_per_epoch + episode_id))
+        #
+        # raw_samples: list[dict[int, list[Sample]]] = [collections.defaultdict(list) for _ in episodes]
+        # terminal_transitions: list[Transition | None] = [None for _ in episodes]
+        # while episodes:
+        #     with tracker.timer("t_policy_choose_action"):
+        #         actions = policy.choose_actions([states[episode_id] for episode_id in episodes])
+        #
+        #     active_episodes = []
+        #     for episode_id, action in zip(episodes, actions):
+        #         with tracker.timer("t_env_step"):
+        #             transition = envs[episode_id].step(action)
+        #
+        #         raw_samples[episode_id][action.player_id].append(
+        #             Sample(episode_id=episode_id, state=states[episode_id], action=action, score=transition.score)
+        #         )
+        #
+        #         if transition.state.terminal:
+        #             terminal_transitions[episode_id] = transition
+        #         else:
+        #             active_episodes.append(episode_id)
+        #
+        #         states[episode_id] = transition.state
+        #
+        #     episodes = active_episodes
+        roller = BatchRoller()
+        episode_ids = [epoch_id * self.num_episodes_per_epoch + idx for idx in range(self.num_episodes_per_epoch)]
+        transitions = roller.run(
+            seeds=episode_ids,
+            policies=[StochasticModelPolicy(model=self.model)],
+            player_policy_ids=[[0] * self.num_players] * self.num_episodes_per_epoch,
+            tracker=tracker,
+        )
 
-        envs = []
-        states = []
-        episodes = list(range(self.num_samples_per_epoch))
-        for episode_id in episodes:
-            env = Environment(num_players=self.num_players)
-            envs.append(env)
-            states.append(env.reset(epoch_id * self.num_samples_per_epoch + episode_id))
-
-        raw_samples: list[dict[int, list[Sample]]] = [collections.defaultdict(list) for _ in episodes]
-        terminal_transitions: list[Transition | None] = [None for _ in episodes]
-        while episodes:
-            with tracker.timer("t_policy_choose_action"):
-                actions = policy.choose_actions([states[episode_id] for episode_id in episodes])
-
-            active_episodes = []
-            for episode_id, action in zip(episodes, actions):
-                with tracker.timer("t_env_step"):
-                    transition = envs[episode_id].step(action)
-
-                raw_samples[episode_id][action.player_id].append(
-                    Sample(episode_id=episode_id, state=states[episode_id], action=action, score=transition.score)
-                )
-
-                if transition.state.terminal:
-                    terminal_transitions[episode_id] = transition
-                else:
-                    active_episodes.append(episode_id)
-
-                states[episode_id] = transition.state
-
-            episodes = active_episodes
-
-        for transition in terminal_transitions:
-            for score in transition.score.scorecard:
+        for episode_transitions in transitions:
+            for score in episode_transitions[-1].score.scorecard:
                 track_score_stats(tracker, score)
 
-        terminal_states = [transition.state for transition in terminal_transitions]
-        terminal_values = [action.prediction.value for action in policy.choose_actions(terminal_states)]
-
         samples = []
-        for per_episode_samples, terminal_transition, terminal_value in zip(raw_samples, terminal_transitions, terminal_values):
-            for per_player_raw_samples in per_episode_samples.values():
-                actions = [sample.action for sample in per_player_raw_samples]
+        for episode_id, episode_transitions in zip(episode_ids, transitions):
+            per_player_samples = collections.defaultdict(list)
+            for transition in episode_transitions:
+                per_player_samples[transition.action.player_id].append(
+                    Sample(
+                        episode_id=episode_id,
+                        state=transition.source_state,
+                        action=transition.action,
+                        score=transition.score,
+                    )
+                )
+
+            for player_samples in per_player_samples.values():
+                actions = [sample.action for sample in player_samples]
                 track_action_stats(tracker, actions)
 
             episode_length = 0
             with tracker.timer("t_compute_rewards"):
-                for per_player_raw_samples in per_episode_samples.values():
-                    assert terminal_transition is not None
-                    episode_length += len(per_player_raw_samples)
+                for player_samples in per_player_samples.values():
+                    episode_length += len(player_samples)
 
-                    per_player_samples = self.reward_fn.apply(
-                        per_player_raw_samples,
-                        terminal_transition,
+                    player_samples = self.reward_fn.apply(
+                        player_samples,
+                        episode_transitions[-1],
                         epoch_id=epoch_id,
                     )
-                    per_player_samples = normalize(per_player_samples, fields=["reward"])
-                    per_player_samples = self.compute_advantages(per_player_samples, terminal_value)
-                    per_player_samples = normalize(per_player_samples, fields=["long_term_return", "advantage"])
-                    samples.extend(per_player_samples)
+                    player_samples = self.compute_advantages(player_samples)
+                    samples.extend(player_samples)
 
             tracker.log_value("episode_length", episode_length)
 
@@ -256,6 +272,21 @@ class PolicyGradientTrainer:
         for s in samples:
             action_counts[(s.action.action_type, s.action.prediction.class_id)] += 1
         tracker.log_value("unique_explored_actions", len(action_counts))
+
+        values = np.array([s.action.prediction.value for s in samples])
+        returns = np.array([s.long_term_return for s in samples])
+
+        v = values.tolist()
+        r = returns.tolist()
+        print(f"{v[:10]=}")
+        print(f"{r[:10]=}")
+        print(f"{v[-10:]=}")
+        print(f"{r[-10:]=}")
+        tracker.log_value("value_mean_absolute_error", np.mean(np.abs(values - returns)))
+        tracker.log_value("value_mean_signed_error", np.mean(values - returns))
+        tracker.log_value("value_mean_squared_error", np.mean(np.square(values - returns)))
+        tracker.log_value("value_explained_variance", (1 - np.var(values - returns) / (np.var(returns) + 1e-8)))
+        tracker.log_value("num_samples", len(samples))
 
         return samples
 
@@ -266,8 +297,7 @@ class PolicyGradientTrainer:
 
         num_batches = 0
         losses = []
-        policy_losses = []
-        value_losses = []
+        random.shuffle(samples)
         for start_index in tqdm.tqdm(range(0, len(samples), self.batch_size), desc="Train step"):
             num_batches += 1
             batch_samples = samples[start_index:start_index + self.batch_size]
@@ -277,29 +307,24 @@ class PolicyGradientTrainer:
                 policy_loss, value_loss = self.model.loss(batch_samples)
 
                 policy_loss *= batch_weight
-                policy_losses.append(policy_loss)
+                tracker.log_value("policy_loss", policy_loss.item())
 
                 value_loss *= batch_weight
-                value_losses.append(value_loss)
+                tracker.log_value("value_loss", value_loss.item())
 
-                loss = policy_loss + self.value_loss_weight * value_loss
+                # loss = policy_loss + self.value_loss_weight * value_loss
+                loss = self.value_loss_weight * value_loss
                 assert torch.isnan(loss).sum() == 0
+                tracker.log_value("loss", loss.item())
                 losses.append(loss)
 
                 loss = self.scaler.scale(loss)
-                loss.backward()
 
-        self.scaler.step(self.optimizer)
-        self.scaler.update()
-
-        total_policy_loss = sum(policy_losses)
-        tracker.log_value("policy_loss", total_policy_loss.item())
-
-        total_value_loss = sum(value_losses)
-        tracker.log_value("value_loss", total_value_loss.item())
+            loss.backward()
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
 
         total_loss = sum(losses)
-        tracker.log_value("loss", total_loss.item())
         loss_hash = tensor_hash(total_loss)
         wandb.log({"loss_hash": loss_hash}, step=epoch_id)
 
@@ -308,27 +333,38 @@ class PolicyGradientTrainer:
     def evaluate(self, tracker: Tracker, epoch_id: int) -> None:
         self.model.eval()
 
-        model_policy = ArgmaxModelPolicy(model=self.model)
-        random_policies = [UniformRandomPolicy(seed=0) for _ in range(self.num_players - 1)]
-
         with tracker.scope("vs_random"):
-            for idx in tqdm.tqdm(range(self.num_eval_samples_per_epoch), desc="Eval step"):
-                index = random.randint(0, len(random_policies))
-                policies: list[Policy] = copy.deepcopy(random_policies)
-                policies.insert(index, model_policy)
-                roller = Roller(env=Environment(num_players=self.num_players), policies=policies)
-                stats = roller.run(seed=idx)
+            policies = [ArgmaxModelPolicy(model=self.model), UniformRandomPolicy(seed=0)]
+            rng = random.Random(0)
+            player_policy_ids = []
+            model_policy_indices = []
+            for _ in range(self.num_eval_episodes_per_epoch):
+                model_policy_index = rng.randint(0, self.num_players - 1)
+                model_policy_indices.append(model_policy_index)
 
+                policy_ids = [1] * (self.num_players - 1)
+                policy_ids.insert(model_policy_index, 0)
+                player_policy_ids.append(policy_ids)
+
+            roller = BatchRoller()
+            transitions = roller.run(
+                seeds=list(range(self.num_eval_episodes_per_epoch)),
+                policies=policies,
+                player_policy_ids=player_policy_ids,
+                tracker=tracker,
+            )
+
+            for episode_transitions, model_policy_index in zip(transitions, model_policy_indices):
                 actions = []
-                for t in stats.transitions:
-                    if t.action.player_id == index:
+                for t in episode_transitions:
+                    if t.action.player_id == model_policy_index:
                         actions.append(t.action)
 
                 track_action_stats(tracker, actions)
 
-                score = stats.transitions[-1].score
-                tracker.log_value("wins", score.winner_id == index)
-                track_score_stats(tracker, score.scorecard[index])
+                score = episode_transitions[-1].score
+                tracker.log_value("wins", score.winner_id == model_policy_index)
+                track_score_stats(tracker, score.scorecard[model_policy_index])
 
         eval_metrics = {}
         for key, value in tracker.report().items():

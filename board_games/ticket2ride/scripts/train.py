@@ -23,8 +23,8 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=0, help="Random seed")
     parser.add_argument("--num_players", type=int, default=2, help="Number of players")
     parser.add_argument("--epochs", type=int, default=100, help="Number of epochs")
-    parser.add_argument("--num_samples_per_epoch", type=int, default=10, help="Number of samples per epoch")
-    parser.add_argument("--num_eval_samples_per_epoch", type=int, default=10, help="Number of samples per epoch")
+    parser.add_argument("--num_episodes_per_epoch", type=int, default=10, help="Number of episodes per epoch")
+    parser.add_argument("--num_eval_episodes_per_epoch", type=int, default=10, help="Number of episodes per epoch")
     parser.add_argument("--batch_size", type=int, default=32, help="Batch size")
     parser.add_argument("--evaluate_every_n_epochs", type=int, default=5, help="Evaluate every n epochs")
     parser.add_argument("--checkpoint_every_n_epochs", type=int, default=20, help="Policy checkpointing frequency")
@@ -35,11 +35,12 @@ def main() -> None:
     parser.add_argument("--gae_lambda", type=float, default=0.95, help="Lambda parameter for TD-lambda in GAE")
     parser.add_argument("--reward_discount", type=float, default=0.95, help="Reward discount factor")
     parser.add_argument("--win_reward", type=float, default=0, help="Reward for winning in points")
-    parser.add_argument("--initial_draw_card_reward", type=float, default=2.0, help="Initial draw card reward")
+    parser.add_argument("--initial_draw_card_reward", type=float, default=0.0, help="Initial draw card reward")
     parser.add_argument("--final_draw_card_reward", type=float, default=0.0, help="Final draw card reward")
+    parser.add_argument("--reward_scale", type=float, default=1.0, help="Rescale rewards for better convergence")
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
     parser.add_argument("--extractors", type=str, default="dynamic", choices=["dynamic", "static"], help="Feature set")
-    parser.add_argument("--value_loss_weight", type=float, default=0, help="Loss weight for learning value function")
+    parser.add_argument("--value_loss_weight", type=float, default=1.0, help="Loss weight for learning value function")
     args = parser.parse_args()
 
     random.seed(args.seed)
@@ -74,8 +75,8 @@ def main() -> None:
         checkpoint_path=checkpoint_path,
         num_players=args.num_players,
         num_epochs=args.epochs,
-        num_samples_per_epoch=args.num_samples_per_epoch,
-        num_eval_samples_per_epoch=args.num_eval_samples_per_epoch,
+        num_episodes_per_epoch=args.num_episodes_per_epoch,
+        num_eval_episodes_per_epoch=args.num_eval_episodes_per_epoch,
         batch_size=args.batch_size,
         evaluate_every_n_epochs=args.evaluate_every_n_epochs,
         checkpoint_every_n_epochs=args.checkpoint_every_n_epochs,
@@ -85,6 +86,7 @@ def main() -> None:
             initial_draw_card_reward=args.initial_draw_card_reward,
             final_draw_card_reward=args.final_draw_card_reward,
             draw_card_horizon_epochs=args.epochs // 2,
+            reward_scale=args.reward_scale,
         ),
         reward_discount=args.reward_discount,
         gae_lambda=args.gae_lambda,

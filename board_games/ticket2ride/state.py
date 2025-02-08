@@ -85,5 +85,6 @@ class Score:
 @dataclass
 class Transition:
     action: Action
-    state: ObservedState
+    source_state: ObservedState
+    target_state: ObservedState
     score: Score

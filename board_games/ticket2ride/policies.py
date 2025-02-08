@@ -81,8 +81,6 @@ class ElementPolicy(Policy):
 
 class UniformRandomPolicy(ElementPolicy):
     def __init__(self, seed: int) -> None:
-        super().__init__()
-
         self.rng = random.Random(seed)
 
     def plan(self, state: ObservedState) -> Plan:
@@ -174,7 +172,7 @@ class KeyboardInputPolicy(ElementPolicy):
 
 
 class ModelPolicy(Policy):
-    def __init__(self, model: Model):
+    def __init__(self, model: Model) -> None:
         self.model = model
 
     def choose_action(self, state: ObservedState) -> Action:

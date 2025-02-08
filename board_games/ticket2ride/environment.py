@@ -23,6 +23,7 @@ from board_games.ticket2ride.consts import (
     NUM_LAST_TURN_CARS, NUM_COLOR_CARDS, NUM_ANY_CARDS,
 )
 from board_games.ticket2ride.longest_path import find_longest_path
+from board_games.ticket2ride.model import Sample
 from board_games.ticket2ride.player import Player
 from board_games.ticket2ride.policies import Policy
 from board_games.ticket2ride.route import ROUTES, Route
@@ -33,6 +34,7 @@ from board_games.ticket2ride.state import (
     Transition
 )
 from board_games.ticket2ride.ticket import DrawnTickets
+from board_games.ticket2ride.tracker import Tracker
 
 
 def verify_card_bookkeeping(board: Board, players: list[Player]) -> None:
@@ -52,17 +54,8 @@ def verify_card_bookkeeping(board: Board, players: list[Player]) -> None:
     assert card_counts[ANY] == NUM_ANY_CARDS
 
 
-@dataclass
-class GameStats:
-    initial_state: ObservedState
-    transitions: list[Transition]
-
-    @property
-    def scorecard(self) -> list[PlayerScore]:
-        return self.transitions[-1].score.scorecard
-
-
 class Environment:
+    current_state: ObservedState
     board: Board
     players: list[Player]
 
@@ -106,7 +99,7 @@ class Environment:
 
         verify_card_bookkeeping(self.board, self.players)
 
-        return ObservedState(
+        self.current_state = ObservedState(
             board=self.board,
             player=self.players[self.player_id],
             action_type=ActionType.PLAN,
@@ -115,6 +108,7 @@ class Environment:
             terminal=self.game_over,
             consecutive_card_draws=self.consecutive_card_draws,
         )
+        return self.current_state
 
     def get_score(self) -> Score:
         if self.action_type not in (ActionType.DRAW_TICKETS, ActionType.BUILD_ROUTE):
@@ -158,7 +152,7 @@ class Environment:
             )
         )
 
-    def get_next_state(
+    def update_state(
         self,
         next_action_type: ActionType,
         drawn_tickets: DrawnTickets | None = None,
@@ -179,8 +173,7 @@ class Environment:
                 self.turn_id += 1
 
         self.action_type = next_action_type
-
-        return ObservedState(
+        self.current_state = ObservedState(
             board=self.board,
             player=self.players[self.player_id],
             action_type=next_action_type,
@@ -190,6 +183,7 @@ class Environment:
             terminal=self.game_over,
             consecutive_card_draws=self.consecutive_card_draws,
         )
+        return self.current_state
 
     def transition(
         self,
@@ -199,12 +193,12 @@ class Environment:
     ) -> Transition:
         verify_card_bookkeeping(self.board, self.players)
 
-        return Transition(
-            # We must compute the score before advancing the state to the next player_id.
-            score=self.get_score(),
-            state=self.get_next_state(next_action_type, drawn_tickets),
-            action=action,
-        )
+        # We must compute the score and save a copy of the current state before advancing the state to accept the next
+        # action.
+        source_state = self.current_state
+        score = self.get_score()
+        target_state = self.update_state(next_action_type, drawn_tickets)
+        return Transition(source_state=source_state, target_state=target_state, action=action, score=score)
 
     def step(self, action: Action) -> Transition:
         assert action.action_type == self.action_type
@@ -277,34 +271,50 @@ class Environment:
             return self.transition(action=action, next_action_type=ActionType.PLAN)
 
 
-class Roller:
-    env: Environment
-    policies: list[Policy]
+class BatchRoller:
+    def run(
+        self,
+        seeds: list[int],
+        policies: list[Policy],
+        player_policy_ids: list[list[int]],
+        tracker: Tracker,
+    ) -> list[list[Transition]]:
+        assert len(seeds) == len(player_policy_ids)
 
-    def __init__(self, env: Environment, policies: list[Policy]):
-        assert MIN_PLAYERS <= len(policies) <= MAX_PLAYERS
-        self.env = env
-        self.policies = policies
+        envs = [Environment(num_players=len(policy_ids)) for policy_ids in player_policy_ids]
 
-    def run(self, seed: int, verbose: bool = False) -> GameStats:
-        initial_state = state = self.env.reset(seed)
-        transition = None
-        transitions = []
-        while not state.terminal:
-            policy = self.policies[state.player.id]
-            action = policy.choose_action(state)
-            if verbose:
-                print(
-                    colored(f"Action turn {state.turn_id}: ", color="green", attrs=["bold"])
-                    + str(action)
-                )
+        states = []
+        episodes = list(range(len(seeds)))
+        for env, seed in zip(envs, seeds):
+            states.append(env.reset(seed))
 
-            transition = self.env.step(action)
-            state = transition.state
-            transitions.append(transition)
+        transitions: list[list[Transition]] = [[] for _ in episodes]
+        while episodes:
+            policies_to_episodes = collections.defaultdict(list)
+            for episode_id in episodes:
+                player_id = states[episode_id].player.id
+                policy_id = player_policy_ids[episode_id][player_id]
+                policies_to_episodes[policy_id].append(episode_id)
 
-        assert transition is not None
-        return GameStats(
-            initial_state=initial_state,
-            transitions=transitions,
-        )
+            episodes = []
+            actions = []
+            for policy_id, policy_episode_ids in policies_to_episodes.items():
+                episodes.extend(policy_episode_ids)
+                policy = policies[policy_id]
+                with tracker.timer("t_policy_choose_action"):
+                    actions.extend(policy.choose_actions([states[episode_id] for episode_id in policy_episode_ids]))
+
+            active_episodes = []
+            for episode_id, action in zip(episodes, actions):
+                with tracker.timer("t_env_step"):
+                    transition = envs[episode_id].step(action)
+                    transitions[episode_id].append(transition)
+
+                if not transition.target_state.terminal:
+                    active_episodes.append(episode_id)
+
+                states[episode_id] = transition.target_state
+
+            episodes = active_episodes
+
+        return transitions

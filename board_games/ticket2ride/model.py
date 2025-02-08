@@ -22,6 +22,7 @@ class Sample:
     score: Score
     reward: float = 0
     long_term_return: float = 0
+    estimated_return: float = 0
     advantage: float = 0
 
 
@@ -227,7 +228,8 @@ class Model(nn.Module):
             for sample in group:
                 states.append(sample.state)
                 advantages.append(sample.advantage)
-                returns.append(sample.long_term_return)
+                returns.append(sample.estimated_return)
+                # returns.append(sample.long_term_return)
                 assert sample.action.prediction is not None
                 targets.append(sample.action.prediction.class_id)
 

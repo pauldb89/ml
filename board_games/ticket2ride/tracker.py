@@ -12,9 +12,9 @@ class Tracker:
     scopes: list[str] = field(default_factory=list)
     metrics: dict[str, list[float]] = field(default_factory=lambda: collections.defaultdict(list))
 
-    def log_value(self, metric_name: str, value: float) -> None:
+    def log_value(self, metric_name: str, value: float | np.float64) -> None:
         metric_key = "/".join(self.scopes + [metric_name])
-        self.metrics[metric_key].append(value)
+        self.metrics[metric_key].append(float(value))
 
     @contextlib.contextmanager
     def scope(self, name: str) -> Generator[None, None, None]:
